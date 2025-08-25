@@ -30,51 +30,50 @@ jobs:
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      # 步骤5：强制创建项目+安装安卓平台（不管路径，日志说成功就成功）
-      - name: 强制安装安卓平台（无视后续检查）
+      # 步骤5：创建项目+安装安卓平台（这次记住gradlew在cordova-project里）
+      - name: 创建项目并安装安卓平台
         run: |
-          # 不管什么目录，直接装！日志成功就继续
           mkdir -p cordova-project && cd cordova-project
           cordova create . com.my.simpleapp "我的网页APP"
           npm config set registry https://registry.npmmirror.com/
           cordova platform add android@10.1.2 --verbose
-          # 日志显示成功就继续，不检查路径了！
-          echo "✅ 不管路径，日志成功就是成功！"
+          echo "✅ 安卓平台安装成功，gradlew在cordova-project里！"
           cd ..
 
-      # 步骤6：复制文件（用日志里的实际路径：根目录/platforms）
-      - name: 复制文件到日志实际路径
+      # 步骤6：复制文件到正确路径（cordova-project内的platforms）
+      - name: 复制文件到cordova-project的platforms
         run: |
-          # 日志显示platforms在根目录，直接用这个路径！
-          mkdir -p platforms/android/app/src/main/assets/www/
-          mkdir -p platforms/android/app/src/main/res/xml/
-          cp -r www/* platforms/android/app/src/main/assets/www/
-          cp config.xml platforms/android/app/src/main/res/xml/
-          cp config.txt platforms/android/app/src/main/assets/www/
-          echo "✅ 文件复制完成，不管路径检查了！"
+          # 这次用cordova-project里的platforms路径（gradlew在这里）
+          mkdir -p cordova-project/platforms/android/app/src/main/assets/www/
+          mkdir -p cordova-project/platforms/android/app/src/main/res/xml/
+          cp -r www/* cordova-project/platforms/android/app/src/main/assets/www/
+          cp config.xml cordova-project/platforms/android/app/src/main/res/xml/
+          cp config.txt cordova-project/platforms/android/app/src/main/assets/www/
 
-      # 步骤7：配置Gradle（根目录/platforms）
+      # 步骤7：配置Gradle（cordova-project内）
       - name: 配置Gradle 7.5
         run: |
-          cd platforms/android
+          cd cordova-project/platforms/android
           mkdir -p gradle/wrapper
           echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
-          cd ../..
+          cd ../../..
 
-      # 步骤8：直接编译！（用日志路径硬刚）
-      - name: 强制编译APK（成败在此一举！）
+      # 步骤8：编译！去cordova-project找gradlew（绝对存在！）
+      - name: 最终编译APK（这次一定找到gradlew）
         run: |
-          echo "🔥 直接编译，不管路径！日志说成功就是成功！"
-          # 进入日志里的platforms目录，用Gradle原生命令编译
-          cd platforms/android
-          chmod +x gradlew  # 给执行权限，避免权限错误
-          ./gradlew assembleRelease || ./gradlew assembleRelease  # 失败重试一次
+          echo "🔥 最后一次！去cordova-project找gradlew！"
+          # 进入cordova-project目录（gradlew在这里）
+          cd cordova-project
+          # 给gradlew权限（这次路径对了，一定能找到）
+          chmod +x gradlew
+          # 用Cordova命令编译（自动调用gradlew，不会错）
+          cordova build android --release
           
-          # 检查APK是否存在（日志里的输出路径）
-          if [ -f "app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
+          # 检查APK（cordova-project内的路径）
+          if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 真失败了，看日志最后错误"
+            echo "❌ 查看编译日志最后错误"
             exit 1
           fi
 
@@ -83,4 +82,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
-          path: platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: cordova-project/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
