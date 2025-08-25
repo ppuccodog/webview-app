@@ -1,10 +1,10 @@
-name: 构建安卓应用（官方环境方案）
+name: 构建安卓应用（彻底解决目录移动问题）
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04  # 使用更稳定的旧版本系统
+    runs-on: ubuntu-latest
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
@@ -14,33 +14,52 @@ jobs:
         with:
           node-version: 14
 
-      - name: 安装Cordova和依赖
+      - name: 安装全局依赖
         run: |
           npm config set registry https://registry.npmjs.org/
-          npm install -g cordova@10.0.0
-          npm install -g properties-parser@0.6.0 string.prototype.codepointat@1.0.1
+          npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
 
-      - name: 安装Java 8
-        uses: actions/setup-java@v3
+      - name: 安装JDK 8
+        uses: actions/setup-java@v4
         with:
           java-version: '8'
           distribution: 'temurin'
 
-      - name: 安装安卓环境（用官方脚本自动配置）
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r21e
-          add-to-path: false
-          api-level: 29
-          build-tools-version: 29.0.3
+      - name: 安装安卓SDK（不移动任何目录）
+        run: |
+          # 1. 创建SDK目录
+          mkdir -p $HOME/android-sdk
+          
+          # 2. 下载并解压SDK工具（保持原始结构）
+          wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
+          unzip -q sdk-tools.zip -d $HOME/android-sdk/cmdline-tools
+          
+          # 3. 直接使用原始路径，不创建latest子目录
+          SDK_MANAGER=$HOME/android-sdk/cmdline-tools/cmdline-tools/bin/sdkmanager
+          echo "✅ sdkmanager路径：$SDK_MANAGER"
+          
+          # 4. 接受许可证并安装必要组件
+          echo "y" | SKIP_JDK_VERSION_CHECK=1 $SDK_MANAGER --licenses
+          SKIP_JDK_VERSION_CHECK=1 $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
+          
+          # 5. 配置环境变量
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "$HOME/android-sdk/cmdline-tools/cmdline-tools/bin" >> $GITHUB_PATH
+          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+
+      - name: 安装Gradle
+        run: |
+          wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
+          unzip -q gradle-7.0-bin.zip
+          echo "GRADLE_HOME=$(pwd)/gradle-7.0" >> $GITHUB_ENV
+          echo "$(pwd)/gradle-7.0/bin" >> $GITHUB_PATH
 
       - name: 创建并编译项目
         run: |
-          # 创建项目
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           
-          # 清除所有插件配置
+          # 配置文件
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
@@ -48,21 +67,16 @@ jobs:
             <access origin="*" />
           </widget>' > config.xml
           
-          # 添加安卓平台（使用自动配置的环境）
+          # 添加平台并编译
           cordova platform add android@9.0.0
-          
-          # 复制网页文件
           cp -rf ../www/* www/
           cp ../config.txt www/
-          
-          # 编译APK
           cordova build android --release
           
           # 检查结果
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 APK生成成功！"
+            echo "🎉 成功生成APK！"
           else
-            echo "❌ 编译失败"
             exit 1
           fi
 
@@ -71,4 +85,3 @@ jobs:
         with:
           name: 我的安卓应用
           path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
-          retention-days: 30
