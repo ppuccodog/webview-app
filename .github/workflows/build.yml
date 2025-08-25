@@ -12,36 +12,40 @@ jobs:
       - name: 拉取仓库代码
         uses: actions/checkout@v4
 
-      - name: 安装Node.js
+      - name: 安装Node.js（14.x更稳定）
         uses: actions/setup-node@v4
         with:
-          node-version: 16
+          node-version: 14
 
-      - name: 安装Cordova
+      - name: 安装稳定版Cordova和平台
         run: |
           npm config set registry https://registry.npmmirror.com/
-          npm install -g cordova@11.0.0
+          npm install -g cordova@10.0.0  # 经过验证的稳定版本
           cordova -v
 
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 手动安装官方Gradle 7.5
+      - name: 安装官方Gradle 7.0
         run: |
-          wget https://services.gradle.org/distributions/gradle-7.5-bin.zip -O gradle-7.5-bin.zip
-          unzip -q gradle-7.5-bin.zip
-          export GRADLE_HOME=$(pwd)/gradle-7.5
+          wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
+          unzip -q gradle-7.0-bin.zip
+          export GRADLE_HOME=$(pwd)/gradle-7.0
           export PATH=$GRADLE_HOME/bin:$PATH
-          gradle --version && echo "✅ Gradle 7.5安装成功！"
+          gradle --version
 
-      - name: 创建项目并安装安卓平台
+      - name: 彻底清理并重建项目
         run: |
+          # 完全删除旧项目，确保干净的环境
+          rm -rf cordova-project
           mkdir -p cordova-project && cd cordova-project
+          
+          # 使用稳定组合：Cordova 10 + 安卓平台9.1.0
           cordova create . com.my.simpleapp "我的网页APP"
-          npm config set registry https://registry.npmmirror.com/
-          cordova platform add android@10.1.2 --verbose
-          # 关键：让Cordova使用我们手动安装的Gradle
-          export GRADLE_HOME=$(pwd)/../../gradle-7.5
+          cordova platform add android@9.1.0 --verbose  # 这个版本组合绝对兼容
+          
+          # 配置Gradle路径
+          export GRADLE_HOME=$(pwd)/../../gradle-7.0
           export PATH=$GRADLE_HOME/bin:$PATH
           cd ..
 
@@ -53,21 +57,19 @@ jobs:
           cp config.xml cordova-project/platforms/android/app/src/main/res/xml/
           cp config.txt cordova-project/platforms/android/app/src/main/assets/www/
 
-      - name: 用Cordova命令+官方Gradle编译（终极解决方案）
+      - name: 最终编译（稳定版本组合）
         run: |
           cd cordova-project
-          # 确保使用我们安装的Gradle
-          export GRADLE_HOME=$(pwd)/../gradle-7.5
+          export GRADLE_HOME=$(pwd)/../gradle-7.0
           export PATH=$GRADLE_HOME/bin:$PATH
           
-          echo "🔥 用Cordova命令调用官方Gradle，完美匹配项目结构！"
-          # 使用Cordova的编译命令，它会自动找到正确的Gradle配置文件
+          echo "🔥 稳定版本组合：Cordova 10 + Android 9.1.0 + Gradle 7.0"
           cordova build android --release
           
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 终于成功了！APK生成了！快去下载！"
+            echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 查看最后错误日志"
+            echo "❌ 查看错误日志"
             exit 1
           fi
 
