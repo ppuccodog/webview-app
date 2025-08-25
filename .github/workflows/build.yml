@@ -26,44 +26,32 @@ jobs:
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 创建PhoneGap项目+补全缺失依赖
+      - name: 创建项目+安装正确依赖
         run: |
-          # 1. 创建项目并进入目录
           phonegap create myapp com.my.simpleapp "我的网页APP"
           cd myapp
-          
-          # 2. 关键：手动安装缺失的 properties-parser 依赖
-          npm install properties-parser@1.0.0 --save-dev
-          
-          # 3. 安装安卓平台（此时依赖已补全，不会报错）
+          # 关键：用npm能找到的1.2.0版本，兼容PhoneGap
+          npm install properties-parser@1.2.0 --save-dev
+          # 安装安卓平台（依赖已正确补全）
           phonegap platform add android@9.0.0 --verbose
-          
-          # 4. 确认平台安装成功
-          if [ -d "platforms/android" ]; then
-            echo "✅ 安卓平台安装成功，依赖已补全！"
-          else
-            echo "❌ 平台安装失败"
-            exit 1
-          fi
           cd ..
 
-      - name: 复制项目文件（路径正确）
+      - name: 复制项目文件
         run: |
-          cp -r www/* myapp/www/    # 网页文件
-          cp config.xml myapp/      # config.xml放项目根目录
-          cp config.txt myapp/www/  # 自定义配置文件
+          cp -r www/* myapp/www/
+          cp config.xml myapp/
+          cp config.txt myapp/www/
 
-      - name: 编译APK（依赖全齐，必成功！）
+      - name: 编译APK（这次必成！）
         run: |
           cd myapp
-          echo "🔥 依赖已补全，开始编译！"
+          echo "🔥 依赖版本正确，开始编译！"
           phonegap build android --release --verbose
           
-          # 检查APK是否生成
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 查看上方日志"
+            echo "❌ 查看日志"
             exit 1
           fi
 
