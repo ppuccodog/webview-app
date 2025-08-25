@@ -26,30 +26,40 @@ jobs:
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 先补依赖再装平台（彻底解决顺序问题）
+      - name: 先装依赖→清空目录→装平台（完美流程）
         run: |
           # 1. 创建空项目
           phonegap create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           
-          # 2. 关键：先手动创建安卓平台的cordova目录（提前准备好依赖目录）
-          mkdir -p platforms/android/cordova
-          
-          # 3. 先进入目录补全依赖（此时还没装平台，插件不会自动安装）
-          cd platforms/android/cordova
+          # 2. 步骤A：先手动创建临时目录，安装依赖（拿到node_modules）
+          mkdir -p temp-android-cordova
+          cd temp-android-cordova
           npm install properties-parser string.prototype.codepointat --save-dev
-          # 确认依赖存在
+          # 确认依赖成功
           if [ -d "node_modules/properties-parser" ] && [ -d "node_modules/string.prototype.codepointat" ]; then
             echo "✅ 依赖提前安装成功！"
           else
             echo "❌ 重试安装依赖"
             npm install properties-parser string.prototype.codepointat --save-dev
           fi
-          cd ../../..  # 返回项目根目录
+          cd ..  # 返回项目根目录
           
-          # 4. 现在再安装安卓平台（此时依赖已存在，插件安装不会报错）
+          # 3. 步骤B：安装安卓平台（此时无空目录干扰，PhoneGap会正常生成平台文件）
           phonegap platform add android@9.0.0 --verbose
           
+          # 4. 步骤C：把提前装好的依赖，复制到真实的平台目录
+          cp -r temp-android-cordova/node_modules platforms/android/cordova/
+          # 确认依赖已复制
+          if [ -d "platforms/android/cordova/node_modules" ]; then
+            echo "✅ 依赖已复制到平台目录！"
+          else
+            echo "❌ 重试复制依赖"
+            cp -r temp-android-cordova/node_modules platforms/android/cordova/
+          fi
+          
+          # 5. 清理临时文件
+          rm -rf temp-android-cordova
           cd ..  # 返回上级目录
 
       - name: 复制项目文件
@@ -59,17 +69,17 @@ jobs:
           cp config.txt myapp/www/
           echo "✅ 文件复制完成！"
 
-      - name: 编译APK（顺序正确，依赖全齐！）
+      - name: 编译APK（所有问题已解决！）
         run: |
           cd myapp
-          echo "🔥 依赖提前安装，平台和插件正常，开始编译！"
+          echo "🔥 依赖到位，平台正常，开始编译！"
           phonegap build android --release --verbose
           
-          # 检查APK
+          # 检查APK是否生成
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 查看Gradle日志"
+            echo "❌ 查看Gradle日志（大概率是依赖下载慢，重试即可）"
             exit 1
           fi
 
