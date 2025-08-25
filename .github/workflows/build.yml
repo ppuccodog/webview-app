@@ -30,23 +30,39 @@ jobs:
           java-version: '8'
           distribution: 'temurin'
 
-      - name: 安装旧版安卓SDK（兼容JDK 8）
+      - name: 手动安装安卓SDK（确保sdkmanager可用）
         run: |
-          # 1. 创建SDK目录
+          # 1. 创建SDK目录并下载工具
           mkdir -p $HOME/android-sdk
-          # 2. 下载兼容JDK 8的SDK工具（cmdline-tools 8.0版本）
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
-          unzip -q sdk-tools.zip -d $HOME/android-sdk/cmdline-tools
-          # 3. 重命名目录（sdkmanager要求）
-          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
-          # 4. 配置环境变量
-          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
-          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
-          # 5. 接受SDK许可证（跳过JDK版本检查）
-          echo "y" | SKIP_JDK_VERSION_CHECK=1 sdkmanager --licenses
-          # 6. 安装必要的SDK包（匹配Cordova 9.0.0）
-          SKIP_JDK_VERSION_CHECK=1 sdkmanager "platforms;android-29" "build-tools;29.0.3" "platform-tools"
+          unzip -q sdk-tools.zip -d $HOME/android-sdk
+          
+          # 2. 手动创建正确的目录结构（sdkmanager必须的路径）
+          mkdir -p $HOME/android-sdk/cmdline-tools/latest
+          mv $HOME/android-sdk/cmdline-tools/* $HOME/android-sdk/cmdline-tools/latest/
+          
+          # 3. 手动添加环境变量并立即生效
+          export ANDROID_SDK_ROOT=$HOME/android-sdk
+          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
+          export PATH=$ANDROID_SDK_ROOT/platform-tools:$PATH
+          
+          # 4. 验证sdkmanager是否存在（关键步骤）
+          if [ -f "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "✅ sdkmanager找到！路径：$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          else
+            echo "❌ sdkmanager未找到，列出目录内容："
+            ls -R $HOME/android-sdk
+            exit 1
+          fi
+          
+          # 5. 接受许可证+安装必要包（用绝对路径执行，避免环境变量问题）
+          echo "y" | SKIP_JDK_VERSION_CHECK=1 $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
+          SKIP_JDK_VERSION_CHECK=1 $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-29" "build-tools;29.0.3" "platform-tools"
+          
+          # 6. 保存环境变量到全局（供后续步骤使用）
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
 
       - name: 安装Gradle 7.0（兼容JDK 8）
         run: |
@@ -60,7 +76,7 @@ jobs:
         run: |
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
-          # 添加安卓平台时指定SDK路径
+          # 用绝对路径指定SDK，确保不迷路
           ANDROID_SDK_ROOT=$HOME/android-sdk cordova platform add android@9.0.0
           # 重写config.xml（无插件）
           echo '<?xml version="1.0" encoding="utf-8"?>
@@ -76,17 +92,17 @@ jobs:
           cp -rf www/* myapp/www/
           cp config.txt myapp/www/
 
-      - name: 编译APK（所有环境兼容）
+      - name: 编译APK（绝对路径兜底）
         run: |
           cd myapp
-          echo "🔥 JDK 8 + 旧版SDK + 全局依赖，编译必成！"
-          # 编译时指定SDK和Gradle路径
+          echo "🔥 绝对路径执行，确保工具都能找到！"
+          # 所有路径都用绝对路径，彻底避免环境变量问题
           ANDROID_SDK_ROOT=$HOME/android-sdk GRADLE_HOME=$(pwd)/../gradle-7.0 cordova build android --release
           
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 查看最后日志"
+            echo "❌ 查看日志"
             exit 1
           fi
 
