@@ -12,57 +12,58 @@ jobs:
       - name: 拉取仓库代码
         uses: actions/checkout@v4
       
-      - name: 安装Node.js（Cordova依赖）
+      - name: 安装Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 16
       
-      - name: 安装Cordova（网页转APP工具）
+      - name: 安装Cordova
         run: |
           npm cache clean -f
           npm install -g cordova@11.0.0
-          cordova -v  # 确认安装成功
+          cordova -v
       
-      - name: 安装安卓编译环境（SDK）
+      - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
       
-      - name: 关键步骤：先创建项目+安装安卓平台（生成platforms文件夹）
+      - name: 第一步：创建项目并安装安卓平台
         run: |
-          # 1. 创建Cordova项目
           cordova create myapp com.my.simpleapp "我的网页APP"
-          
-          # 2. 进入项目目录，安装安卓平台（这一步才会生成platforms/android文件夹）
           cd myapp
-          cordova platform add android@10.1.2 --verbose  # 安装安卓平台，生成路径
-          cd ..  # 回到根目录
+          cordova platform add android@10.1.2 --verbose
+          cd ..
       
-      - name: 再复制文件（此时platforms文件夹已存在，不会报错）
+      - name: 第二步：先创建目标文件夹（关键修复）
         run: |
-          # 复制www文件夹到安卓项目的assets目录（存放网页文件）
-          cp -r www myapp/platforms/android/app/src/main/assets/
-          
-          # 复制config.xml到安卓项目的res/xml目录（APP配置）
+          # 手动创建assets目录（确保存在，避免复制失败）
+          mkdir -p myapp/platforms/android/app/src/main/assets/
+          # 手动创建res/xml目录（存放config.xml）
+          mkdir -p myapp/platforms/android/app/src/main/res/xml/
+          # 手动创建www目录（存放网页文件）
+          mkdir -p myapp/platforms/android/app/src/main/assets/www/
+      
+      - name: 第三步：再复制文件（此时目录已存在）
+        run: |
+          # 复制网页文件到assets目录
+          cp -r www/* myapp/platforms/android/app/src/main/assets/www/
+          # 复制config.xml到res/xml目录
           cp config.xml myapp/platforms/android/app/src/main/res/xml/
-          
-          # 复制config.txt到网页目录（网址配置）
+          # 复制网址配置文件到www目录
           cp config.txt myapp/platforms/android/app/src/main/assets/www/
       
-      - name: 配置兼容的Gradle版本（解决编译错误）
+      - name: 配置Gradle版本
         run: |
-          # 路径改为myapp下的platforms（因为安卓平台安装在myapp项目内）
           cd myapp/platforms/android
           mkdir -p gradle/wrapper
           echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
       
-      - name: 编译生成APK文件
+      - name: 编译APK
         run: |
-          # 进入myapp项目目录编译
           cd myapp
-          cordova build android --release  # 用Cordova命令编译，更适配
+          cordova build android --release
       
-      - name: 保存APK供下载
+      - name: 保存APK
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
-          # 路径对应myapp项目内的APK输出位置
           path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
