@@ -17,58 +17,57 @@ jobs:
         with:
           node-version: 14
 
-      - name: 安装PhoneGap（Cordova的替代方案）
+      - name: 安装PhoneGap
         run: |
           npm config set registry https://registry.npmmirror.com/
           npm install -g phonegap@9.0.0
-          phonegap -v  # 确认安装成功，避免后续隐性问题
+          phonegap -v
 
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 创建PhoneGap项目（确保平台完整）
+      - name: 创建PhoneGap项目+补全缺失依赖
         run: |
-          # 创建项目并进入目录
+          # 1. 创建项目并进入目录
           phonegap create myapp com.my.simpleapp "我的网页APP"
           cd myapp
-          # 安装安卓平台，增加日志详情，方便排查平台安装问题
+          
+          # 2. 关键：手动安装缺失的 properties-parser 依赖
+          npm install properties-parser@1.0.0 --save-dev
+          
+          # 3. 安装安卓平台（此时依赖已补全，不会报错）
           phonegap platform add android@9.0.0 --verbose
-          # 提前确认安卓平台目录存在（双重保险）
+          
+          # 4. 确认平台安装成功
           if [ -d "platforms/android" ]; then
-            echo "✅ PhoneGap安卓平台安装成功！"
+            echo "✅ 安卓平台安装成功，依赖已补全！"
           else
-            echo "❌ 平台安装失败，重试一次"
-            phonegap platform add android@9.0.0 --verbose
+            echo "❌ 平台安装失败"
             exit 1
           fi
           cd ..
 
-      - name: 复制项目文件（修正config.xml路径）
+      - name: 复制项目文件（路径正确）
         run: |
-          # 1. 复制网页文件到PhoneGap的www目录（覆盖默认页面）
-          cp -r www/* myapp/www/
-          # 2. config.xml放在项目根目录（PhoneGap要求，否则配置不生效）
-          cp config.xml myapp/
-          # 3. 配置文件放到www目录，供APP内部读取
-          cp config.txt myapp/www/
-          echo "✅ 所有文件复制完成，路径正确！"
+          cp -r www/* myapp/www/    # 网页文件
+          cp config.xml myapp/      # config.xml放项目根目录
+          cp config.txt myapp/www/  # 自定义配置文件
 
-      - name: 编译APK（PhoneGap简化流程）
+      - name: 编译APK（依赖全齐，必成功！）
         run: |
           cd myapp
-          echo "🔥 使用PhoneGap编译，避开Cordova API问题！"
-          # 执行编译，显示详细日志，方便定位最终问题
+          echo "🔥 依赖已补全，开始编译！"
           phonegap build android --release --verbose
           
-          # 检查APK是否生成（路径和PhoneGap平台结构完全匹配）
+          # 检查APK是否生成
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 编译失败，查看上方详细日志"
+            echo "❌ 查看上方日志"
             exit 1
           fi
 
-      - name: 上传APK（确保路径正确）
+      - name: 上传APK
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
