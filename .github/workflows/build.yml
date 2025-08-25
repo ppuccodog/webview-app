@@ -24,86 +24,66 @@ jobs:
         run: |
           npm config set registry https://registry.npmmirror.com/
           npm cache clean -f
-          echo "第一次尝试安装Cordova..."
           npm install -g cordova@11.0.0
-          cordova -v && echo "✅ Cordova安装成功" || echo "❌ 第一次安装失败，重试一次"
-          
-          if ! command -v cordova &> /dev/null; then
-            echo "正在重试安装Cordova..."
-            npm install -g cordova@11.0.0
-            cordova -v && echo "✅ 重试后Cordova安装成功" || (echo "❌ 两次安装均失败" && exit 1)
-          fi
+          cordova -v || (echo "Cordova安装失败，重试" && npm install -g cordova@11.0.0)
 
       # 步骤4：安装安卓SDK
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      # 步骤5：创建项目+安装安卓平台（明确路径）
-      - name: 创建项目并安装安卓平台
+      # 步骤5：直接安装安卓平台（不绕myapp，避免路径混乱）
+      - name: 直接安装安卓平台（根目录生成platforms）
         run: |
-          # 创建Cordova项目（myapp目录）
-          cordova create myapp com.my.simpleapp "我的网页APP"
-          
-          # 进入myapp目录安装安卓平台（gradlew会生成在这里）
-          cd myapp
+          # 无需创建myapp，直接在根目录初始化并安装安卓平台
+          cordova init . com.my.simpleapp "我的网页APP"  # 根目录初始化项目
           npm config set registry https://registry.npmmirror.com/
-          echo "正在安装安卓平台..."
           cordova platform add android@10.1.2 --verbose
           
-          # 确认myapp内的platforms文件夹是否存在（这次绝对正确）
+          # 检查根目录platforms（日志实际生成路径）
           if [ -d "platforms/android" ]; then
-            echo "✅ 安卓平台安装成功！路径：myapp/platforms/android"
+            echo "✅ 安卓平台安装成功！路径：根目录/platforms/android"
           else
             echo "❌ 安卓平台安装失败"
             exit 1
           fi
-          cd ..  # 回到根目录
 
-      # 步骤6：创建目标文件夹（用myapp内的路径）
-      - name: 创建文件复制所需的目标文件夹
+      # 步骤6：创建目标文件夹（根目录platforms）
+      - name: 创建文件复制目录
         run: |
-          mkdir -p myapp/platforms/android/app/src/main/assets/
-          mkdir -p myapp/platforms/android/app/src/main/res/xml/
-          mkdir -p myapp/platforms/android/app/src/main/assets/www/
-          echo "✅ 所有目标文件夹创建完成"
+          mkdir -p platforms/android/app/src/main/assets/www/
+          mkdir -p platforms/android/app/src/main/res/xml/
 
-      # 步骤7：复制文件（目标路径：myapp内的platforms）
-      - name: 复制项目文件到安卓目录
+      # 步骤7：复制文件到根目录platforms
+      - name: 复制网页和配置文件
         run: |
-          cp -r www/* myapp/platforms/android/app/src/main/assets/www/
-          cp config.xml myapp/platforms/android/app/src/main/res/xml/
-          cp config.txt myapp/platforms/android/app/src/main/assets/www/
-          echo "✅ 所有文件复制完成"
+          cp -r www/* platforms/android/app/src/main/assets/www/
+          cp config.xml platforms/android/app/src/main/res/xml/
+          cp config.txt platforms/android/app/src/main/assets/www/
 
-      # 步骤8：配置Gradle版本（进入myapp内的platforms）
-      - name: 配置Gradle 7.5版本
+      # 步骤8：配置Gradle 7.5（根目录platforms）
+      - name: 配置Gradle版本
         run: |
-          cd myapp/platforms/android
+          cd platforms/android
           mkdir -p gradle/wrapper
           echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
-          echo "✅ Gradle版本配置完成"
-          cd ../../..  # 回到根目录
 
-      # 步骤9：编译APK（关键！进入myapp目录用Cordova命令编译，gradlew一定存在）
-      - name: 编译生成APK（最终正确步骤）
+      # 步骤9：编译APK（根目录执行Cordova命令）
+      - name: 编译生成APK
         run: |
-          # 进入myapp目录（gradlew在这里，Cordova命令也需要在这里执行）
-          cd myapp
-          echo "开始编译APK，首次编译可能需要10-15分钟..."
-          # 用Cordova自带命令编译，自动调用gradlew，不会找不到文件
-          cordova build android --release
+          echo "开始编译，首次约10分钟..."
+          cordova build android --release  # 根目录执行，自动找到platforms
           
-          # 检查APK是否生成（路径：myapp/platforms/android/...）
+          # 检查APK是否生成
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "✅ APK编译成功！终于搞定了！"
+            echo "✅ APK编译成功！"
           else
             echo "❌ APK编译失败"
             exit 1
           fi
 
-      # 步骤10：保存APK（路径正确）
-      - name: 上传APK文件供下载
+      # 步骤10：下载APK
+      - name: 上传APK
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
-          path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
