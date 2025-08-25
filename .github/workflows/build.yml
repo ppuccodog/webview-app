@@ -24,17 +24,31 @@ jobs:
           npm install -g properties-parser@0.6.0 string.prototype.codepointat@1.0.1
           cordova -v
 
-      - name: 安装JDK 8（移除Maven缓存，避免找pom.xml）
+      - name: 安装JDK 8（Cordova必须）
         uses: actions/setup-java@v4
         with:
           java-version: '8'
           distribution: 'temurin'
-          # 关键：删除 cache: maven，因为我们不是Maven项目
 
-      - name: 安装安卓SDK
-        uses: android-actions/setup-android@v3
+      - name: 安装旧版安卓SDK（兼容JDK 8）
+        run: |
+          # 1. 创建SDK目录
+          mkdir -p $HOME/android-sdk
+          # 2. 下载兼容JDK 8的SDK工具（cmdline-tools 8.0版本）
+          wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
+          unzip -q sdk-tools.zip -d $HOME/android-sdk/cmdline-tools
+          # 3. 重命名目录（sdkmanager要求）
+          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+          # 4. 配置环境变量
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+          # 5. 接受SDK许可证（跳过JDK版本检查）
+          echo "y" | SKIP_JDK_VERSION_CHECK=1 sdkmanager --licenses
+          # 6. 安装必要的SDK包（匹配Cordova 9.0.0）
+          SKIP_JDK_VERSION_CHECK=1 sdkmanager "platforms;android-29" "build-tools;29.0.3" "platform-tools"
 
-      - name: 安装Gradle并配置环境
+      - name: 安装Gradle 7.0（兼容JDK 8）
         run: |
           wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
           unzip -q gradle-7.0-bin.zip
@@ -46,7 +60,8 @@ jobs:
         run: |
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
-          cordova platform add android@9.0.0
+          # 添加安卓平台时指定SDK路径
+          ANDROID_SDK_ROOT=$HOME/android-sdk cordova platform add android@9.0.0
           # 重写config.xml（无插件）
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
@@ -61,16 +76,17 @@ jobs:
           cp -rf www/* myapp/www/
           cp config.txt myapp/www/
 
-      - name: 编译APK（最后一步！）
+      - name: 编译APK（所有环境兼容）
         run: |
           cd myapp
-          echo "🔥 JDK 8就绪，无Maven干扰，编译必成！"
-          cordova build android --release
+          echo "🔥 JDK 8 + 旧版SDK + 全局依赖，编译必成！"
+          # 编译时指定SDK和Gradle路径
+          ANDROID_SDK_ROOT=$HOME/android-sdk GRADLE_HOME=$(pwd)/../gradle-7.0 cordova build android --release
           
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 查看Gradle日志"
+            echo "❌ 查看最后日志"
             exit 1
           fi
 
