@@ -26,60 +26,52 @@ jobs:
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 先装依赖→清空目录→装平台（完美流程）
+      - name: 依赖预安装+强制生效（终极解决方案）
         run: |
-          # 1. 创建空项目
+          # 1. 创建项目
           phonegap create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           
-          # 2. 步骤A：先手动创建临时目录，安装依赖（拿到node_modules）
-          mkdir -p temp-android-cordova
-          cd temp-android-cordova
-          npm install properties-parser string.prototype.codepointat --save-dev
-          # 确认依赖成功
-          if [ -d "node_modules/properties-parser" ] && [ -d "node_modules/string.prototype.codepointat" ]; then
-            echo "✅ 依赖提前安装成功！"
-          else
-            echo "❌ 重试安装依赖"
-            npm install properties-parser string.prototype.codepointat --save-dev
-          fi
-          cd ..  # 返回项目根目录
+          # 2. 预安装依赖到临时目录
+          mkdir -p temp-deps
+          cd temp-deps
+          npm install properties-parser@0.6.0 string.prototype.codepointat@1.0.1 --save-dev
+          cd ..
           
-          # 3. 步骤B：安装安卓平台（此时无空目录干扰，PhoneGap会正常生成平台文件）
+          # 3. 安装安卓平台（此时会自动开始安装插件）
           phonegap platform add android@9.0.0 --verbose
           
-          # 4. 步骤C：把提前装好的依赖，复制到真实的平台目录
-          cp -r temp-android-cordova/node_modules platforms/android/cordova/
-          # 确认依赖已复制
-          if [ -d "platforms/android/cordova/node_modules" ]; then
-            echo "✅ 依赖已复制到平台目录！"
-          else
-            echo "❌ 重试复制依赖"
-            cp -r temp-android-cordova/node_modules platforms/android/cordova/
-          fi
+          # 4. 关键：在插件安装的间隙，复制依赖并强制npm识别
+          cp -r temp-deps/node_modules platforms/android/cordova/
           
-          # 5. 清理临时文件
-          rm -rf temp-android-cordova
-          cd ..  # 返回上级目录
+          # 5. 进入平台目录，强制npm重新识别依赖（核心修复）
+          cd platforms/android/cordova
+          npm init -y  # 生成package.json，让Node.js识别node_modules
+          npm install --production  # 刷新依赖缓存
+          cd ../../..
+          
+          # 6. 手动重新安装插件，确保依赖生效
+          phonegap plugin add cordova-plugin-vibration@2.1.5 --verbose
+          phonegap plugin add cordova-plugin-network-information@1.3.3 --verbose
+          
+          cd ..
 
       - name: 复制项目文件
         run: |
           cp -rf www/* myapp/www/
           cp config.xml myapp/
           cp config.txt myapp/www/
-          echo "✅ 文件复制完成！"
 
-      - name: 编译APK（所有问题已解决！）
+      - name: 编译APK（最终步骤）
         run: |
           cd myapp
-          echo "🔥 依赖到位，平台正常，开始编译！"
+          echo "🔥 依赖已强制识别，开始编译！"
           phonegap build android --release --verbose
           
-          # 检查APK是否生成
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 终于成功了！APK生成了！"
+            echo "🎉 成功生成APK！"
           else
-            echo "❌ 查看Gradle日志（大概率是依赖下载慢，重试即可）"
+            echo "❌ 查看日志"
             exit 1
           fi
 
