@@ -17,73 +17,66 @@ jobs:
         with:
           node-version: 14
 
-      - name: 安装Cordova（避开PhoneGap的自动插件）
+      - name: 全局安装所有依赖（彻底避开路径）
         run: |
           npm config set registry https://registry.npmjs.org/
+          # 1. 全局安装Cordova
           npm install -g cordova@10.0.0
+          # 2. 全局安装缺失模块（Node.js任何地方都能找到）
+          npm install -g properties-parser@0.6.0 string.prototype.codepointat@1.0.1
+          # 确认安装成功
           cordova -v
+          npm list -g properties-parser
 
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 安装Gradle 7.0
+      - name: 安装Gradle并配置环境变量
         run: |
           wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
           unzip -q gradle-7.0-bin.zip
-          export GRADLE_HOME=$(pwd)/gradle-7.0
-          export PATH=$GRADLE_HOME/bin:$PATH
+          echo "GRADLE_HOME=$(pwd)/gradle-7.0" >> $GITHUB_ENV
+          echo "$(pwd)/gradle-7.0/bin" >> $GITHUB_PATH
           gradle --version
 
-      - name: 创建纯WebView项目（无任何插件）
+      - name: 创建项目+添加平台（全程不进子目录）
         run: |
-          # 创建最简化项目
+          # 1. 创建Cordova项目（一步完成）
           cordova create myapp com.my.simpleapp "我的网页APP"
+          
+          # 2. 进入项目根目录，添加安卓平台（只进myapp，不进更深目录）
           cd myapp
+          cordova platform add android@9.0.0
           
-          # 关键：只添加安卓平台，不安装任何插件
-          cordova platform add android@9.0.0 --no-fetch
-          
-          # 手动补全所有依赖
-          cd platforms/android/cordova
-          npm init -y
-          npm install properties-parser@0.6.0 string.prototype.codepointat@1.0.1 --save-dev
-          cd ../../..
-          
-          # 清理自动添加的插件配置（彻底移除vibration等）
-          rm -f config.xml
-          cat > config.xml << EOF
-          <?xml version='1.0' encoding='utf-8'?>
+          # 3. 清理多余插件配置（重写config.xml，无任何插件）
+          echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
-              <name>我的网页APP</name>
-              <description>A simple Apache Cordova application that displays a webview.</description>
-              <author email="dev@cordova.apache.org" href="http://cordova.io">Apache Cordova Team</author>
-              <content src="index.html" />
-              <access origin="*" />
-              <allow-intent href="http://*/*" />
-              <allow-intent href="https://*/*" />
-          </widget>
-          EOF
+            <name>我的网页APP</name>
+            <content src="index.html" />
+            <access origin="*" />
+            <allow-intent href="http://*/*" />
+            <allow-intent href="https://*/*" />
+          </widget>' > config.xml
           
           cd ..
 
-      - name: 复制项目文件
+      - name: 复制网页文件（简单覆盖）
         run: |
           cp -rf www/* myapp/www/
-          cp config.txt myapp/www/
+          cp config.txt myapp/www/  # 复制你的配置文件
 
-      - name: 编译APK（无插件干扰）
+      - name: 编译APK（全程用全局依赖）
         run: |
           cd myapp
-          export GRADLE_HOME=$(pwd)/../gradle-7.0
-          export PATH=$GRADLE_HOME/bin:$PATH
+          echo "🔥 全局依赖已就绪，开始编译！"
+          # 直接编译，不做任何目录操作
+          cordova build android --release
           
-          echo "🔥 无插件干扰，最简化编译！"
-          cordova build android --release -- --packageType=apk
-          
-          if [ -f "platforms/android/app/build/outputs/apk/release/app-release.apk" ]; then
+          # 检查APK是否生成（路径固定）
+          if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 查看最后错误"
+            echo "❌ 最后一步失败，查看Gradle日志"
             exit 1
           fi
 
@@ -91,5 +84,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
-          path: myapp/platforms/android/app/build/outputs/apk/release/app-release.apk
+          path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
           retention-days: 30
