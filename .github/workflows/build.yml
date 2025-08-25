@@ -1,0 +1,44 @@
+name: 构建安卓应用
+on:
+  push:
+    branches: [ main ]  # 当代码有更新时自动编译
+  workflow_dispatch:  # 允许手动触发编译
+
+jobs:
+  build:
+    runs-on: ubuntu-latest  # 使用云端的Ubuntu系统编译
+    
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+      
+      - name: 安装Node.js（运行Cordova的工具）
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      
+      - name: 安装Cordova（网页转APP的工具）
+        run: npm install -g cordova
+      
+      - name: 安装安卓编译工具
+        uses: android-actions/setup-android@v3
+      
+      - name: 准备项目文件
+        run: |
+          cordova create app com.my.simpleapp "我的网页APP"
+          cd app
+          cp -r ../www www/  # 复制我们的网页文件
+          cp ../config.xml .  # 复制配置文件
+          cp ../config.txt www/  # 复制网址配置文件
+          cordova platform add android@12.0.1  # 添加安卓平台支持
+      
+      - name: 编译生成APK文件
+        run: |
+          cd app
+          cordova build android --release
+      
+      - name: 保存生成的APP
+        uses: actions/upload-artifact@v4
+        with:
+          name: 我的安卓应用
+          path: app/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
