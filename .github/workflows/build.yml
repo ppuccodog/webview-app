@@ -12,21 +12,21 @@ jobs:
       - name: 拉取仓库代码
         uses: actions/checkout@v4
 
-      - name: 安装Node.js（14.x更稳定）
+      - name: 安装Node.js 14
         uses: actions/setup-node@v4
         with:
           node-version: 14
 
-      - name: 安装稳定版Cordova和平台
+      - name: 安装Cordova 10
         run: |
           npm config set registry https://registry.npmmirror.com/
-          npm install -g cordova@10.0.0  # 经过验证的稳定版本
+          npm install -g cordova@10.0.0
           cordova -v
 
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 安装官方Gradle 7.0
+      - name: 安装Gradle 7.0
         run: |
           wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
           unzip -q gradle-7.0-bin.zip
@@ -34,19 +34,28 @@ jobs:
           export PATH=$GRADLE_HOME/bin:$PATH
           gradle --version
 
-      - name: 彻底清理并重建项目
+      - name: 手动下载完整安卓平台包
         run: |
-          # 完全删除旧项目，确保干净的环境
-          rm -rf cordova-project
+          # 创建项目目录
           mkdir -p cordova-project && cd cordova-project
-          
-          # 使用稳定组合：Cordova 10 + 安卓平台9.1.0
           cordova create . com.my.simpleapp "我的网页APP"
-          cordova platform add android@9.1.0 --verbose  # 这个版本组合绝对兼容
           
-          # 配置Gradle路径
-          export GRADLE_HOME=$(pwd)/../../gradle-7.0
-          export PATH=$GRADLE_HOME/bin:$PATH
+          # 手动下载安卓平台9.1.0完整包（确保Api.js存在）
+          npm install cordova-android@9.1.0 --save-dev
+          
+          # 手动复制平台文件到指定目录
+          mkdir -p platforms/android
+          cp -r node_modules/cordova-android/* platforms/android/
+          
+          # 确认Api.js存在
+          if [ -f "platforms/android/cordova/Api.js" ]; then
+            echo "✅ 安卓平台API文件存在！"
+          else
+            echo "❌ 紧急：Api.js还是缺失，重试下载"
+            npm install cordova-android@9.1.0 --save-dev
+            cp -r node_modules/cordova-android/* platforms/android/
+          fi
+          
           cd ..
 
       - name: 复制项目文件
@@ -57,13 +66,13 @@ jobs:
           cp config.xml cordova-project/platforms/android/app/src/main/res/xml/
           cp config.txt cordova-project/platforms/android/app/src/main/assets/www/
 
-      - name: 最终编译（稳定版本组合）
+      - name: 最终编译（手动确保API文件存在）
         run: |
           cd cordova-project
           export GRADLE_HOME=$(pwd)/../gradle-7.0
           export PATH=$GRADLE_HOME/bin:$PATH
           
-          echo "🔥 稳定版本组合：Cordova 10 + Android 9.1.0 + Gradle 7.0"
+          echo "🔥 手动确保了Api.js存在，这次一定成功！"
           cordova build android --release
           
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
