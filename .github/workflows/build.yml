@@ -24,12 +24,12 @@ jobs:
           npm install -g properties-parser@0.6.0 string.prototype.codepointat@1.0.1
           cordova -v
 
-      - name: 安装JDK 8（关键！Cordova 10必须用JDK 8）
+      - name: 安装JDK 8（移除Maven缓存，避免找pom.xml）
         uses: actions/setup-java@v4
         with:
           java-version: '8'
           distribution: 'temurin'
-          cache: maven
+          # 关键：删除 cache: maven，因为我们不是Maven项目
 
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
@@ -47,7 +47,7 @@ jobs:
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           cordova platform add android@9.0.0
-          # 重写config.xml
+          # 重写config.xml（无插件）
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
@@ -61,16 +61,16 @@ jobs:
           cp -rf www/* myapp/www/
           cp config.txt myapp/www/
 
-      - name: 编译APK（JDK 8已就绪）
+      - name: 编译APK（最后一步！）
         run: |
           cd myapp
-          echo "🔥 JDK 8 + 全局依赖，编译必成！"
+          echo "🔥 JDK 8就绪，无Maven干扰，编译必成！"
           cordova build android --release
           
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 查看日志"
+            echo "❌ 查看Gradle日志"
             exit 1
           fi
 
