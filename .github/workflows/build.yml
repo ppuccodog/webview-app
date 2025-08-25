@@ -17,61 +17,73 @@ jobs:
         with:
           node-version: 14
 
-      - name: 安装PhoneGap（官方镜像）
+      - name: 安装Cordova（避开PhoneGap的自动插件）
         run: |
           npm config set registry https://registry.npmjs.org/
-          npm install -g phonegap@9.0.0
-          phonegap -v
+          npm install -g cordova@10.0.0
+          cordova -v
 
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 依赖预安装+强制生效（终极解决方案）
+      - name: 安装Gradle 7.0
         run: |
-          # 1. 创建项目
-          phonegap create myapp com.my.simpleapp "我的网页APP"
+          wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
+          unzip -q gradle-7.0-bin.zip
+          export GRADLE_HOME=$(pwd)/gradle-7.0
+          export PATH=$GRADLE_HOME/bin:$PATH
+          gradle --version
+
+      - name: 创建纯WebView项目（无任何插件）
+        run: |
+          # 创建最简化项目
+          cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           
-          # 2. 预安装依赖到临时目录
-          mkdir -p temp-deps
-          cd temp-deps
-          npm install properties-parser@0.6.0 string.prototype.codepointat@1.0.1 --save-dev
-          cd ..
+          # 关键：只添加安卓平台，不安装任何插件
+          cordova platform add android@9.0.0 --no-fetch
           
-          # 3. 安装安卓平台（此时会自动开始安装插件）
-          phonegap platform add android@9.0.0 --verbose
-          
-          # 4. 关键：在插件安装的间隙，复制依赖并强制npm识别
-          cp -r temp-deps/node_modules platforms/android/cordova/
-          
-          # 5. 进入平台目录，强制npm重新识别依赖（核心修复）
+          # 手动补全所有依赖
           cd platforms/android/cordova
-          npm init -y  # 生成package.json，让Node.js识别node_modules
-          npm install --production  # 刷新依赖缓存
+          npm init -y
+          npm install properties-parser@0.6.0 string.prototype.codepointat@1.0.1 --save-dev
           cd ../../..
           
-          # 6. 手动重新安装插件，确保依赖生效
-          phonegap plugin add cordova-plugin-vibration@2.1.5 --verbose
-          phonegap plugin add cordova-plugin-network-information@1.3.3 --verbose
+          # 清理自动添加的插件配置（彻底移除vibration等）
+          rm -f config.xml
+          cat > config.xml << EOF
+          <?xml version='1.0' encoding='utf-8'?>
+          <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+              <name>我的网页APP</name>
+              <description>A simple Apache Cordova application that displays a webview.</description>
+              <author email="dev@cordova.apache.org" href="http://cordova.io">Apache Cordova Team</author>
+              <content src="index.html" />
+              <access origin="*" />
+              <allow-intent href="http://*/*" />
+              <allow-intent href="https://*/*" />
+          </widget>
+          EOF
           
           cd ..
 
       - name: 复制项目文件
         run: |
           cp -rf www/* myapp/www/
-          cp config.xml myapp/
           cp config.txt myapp/www/
 
-      - name: 编译APK（最终步骤）
+      - name: 编译APK（无插件干扰）
         run: |
           cd myapp
-          echo "🔥 依赖已强制识别，开始编译！"
-          phonegap build android --release --verbose
+          export GRADLE_HOME=$(pwd)/../gradle-7.0
+          export PATH=$GRADLE_HOME/bin:$PATH
           
-          if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 成功生成APK！"
+          echo "🔥 无插件干扰，最简化编译！"
+          cordova build android --release -- --packageType=apk
+          
+          if [ -f "platforms/android/app/build/outputs/apk/release/app-release.apk" ]; then
+            echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 查看日志"
+            echo "❌ 查看最后错误"
             exit 1
           fi
 
@@ -79,5 +91,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
-          path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: myapp/platforms/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
