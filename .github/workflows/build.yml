@@ -1,4 +1,4 @@
-name: 构建安卓应用（强制Gradle使用JDK 8）
+name: 构建安卓应用（修复依赖下载问题）
 on:
   workflow_dispatch:
 
@@ -23,13 +23,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install openjdk-8-jdk openjdk-11-jdk -y
-          # 记录JDK路径
           echo "JDK8_PATH=/usr/lib/jvm/java-8-openjdk-amd64" >> $GITHUB_ENV
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
 
       - name: 用JDK 11安装安卓SDK
         run: |
-          # 强制使用JDK 11运行SDK工具
           export JAVA_HOME=$JDK11_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           java -version
@@ -49,18 +47,16 @@ jobs:
           echo "GRADLE_HOME=$(pwd)/gradle-6.9" >> $GITHUB_ENV
           echo "$(pwd)/gradle-6.9/bin" >> $GITHUB_PATH
 
-      - name: 编译Cordova项目（强制JDK 8）
+      - name: 编译Cordova项目（添加Google仓库）
         run: |
-          # 强制使用JDK 8编译
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           java -version
           
-          # 创建项目
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           
-          # 配置文件（禁用AndroidX）
+          # 基础配置
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
@@ -76,9 +72,16 @@ jobs:
           cp -rf ../www/* www/
           cp ../config.txt www/
           
-          # 关键：强制Gradle使用JDK 8
-          echo "org.gradle.java.home=$JDK8_PATH" > gradle.properties
-          cat gradle.properties  # 验证配置
+          # 关键修复：修改Gradle配置，添加Google仓库
+          echo "修复Gradle配置..."
+          # 修改项目级build.gradle
+          sed -i 's/maven { url "https:\/\/jcenter.bintray.com" }/maven { url "https:\/\/jcenter.bintray.com" }\n        maven { url "https:\/\/maven.google.com" }\n        maven { url "https:\/\/dl.google.com\/maven\/repo\/" }/' platforms/android/build.gradle
+          
+          # 修改app级build.gradle
+          sed -i 's/dependencies {/dependencies {\n    implementation "com.g00fy2:versioncompare:1.3.4"/' platforms/android/app/build.gradle
+          
+          # 强制Gradle使用JDK 8
+          echo "org.gradle.java.home=$JDK8_PATH" > platforms/android/gradle.properties
           
           # 编译APK
           cordova build android --release
