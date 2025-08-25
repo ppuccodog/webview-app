@@ -17,9 +17,8 @@ jobs:
         with:
           node-version: 14
 
-      - name: 安装PhoneGap（用官方镜像确保完整）
+      - name: 安装PhoneGap（官方镜像）
         run: |
-          # 切换到官方npm镜像，避免版本缺失
           npm config set registry https://registry.npmjs.org/
           npm install -g phonegap@9.0.0
           phonegap -v
@@ -27,21 +26,28 @@ jobs:
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 创建项目+自动安装依赖
+      - name: 创建项目+精准补全平台依赖
         run: |
+          # 1. 创建项目并安装安卓平台（先让平台目录生成）
           phonegap create myapp com.my.simpleapp "我的网页APP"
           cd myapp
-          # 关键：不指定版本，让npm自动选最新兼容版
-          npm install properties-parser --save-dev
-          # 确认依赖安装成功
-          if [ -d "node_modules/properties-parser" ]; then
-            echo "✅ properties-parser安装成功！"
+          phonegap platform add android@9.0.0 --verbose
+          
+          # 2. 关键：进入安卓平台的cordova目录，补全缺失依赖
+          cd platforms/android/cordova
+          # 安装 properties-parser 和它依赖的 string.prototype.codepointat
+          npm install properties-parser string.prototype.codepointat --save-dev
+          
+          # 3. 确认依赖安装成功
+          if [ -d "node_modules/properties-parser" ] && [ -d "node_modules/string.prototype.codepointat" ]; then
+            echo "✅ 所有平台依赖都安装成功！"
           else
             echo "❌ 重试安装依赖"
-            npm install properties-parser --save-dev
+            npm install properties-parser string.prototype.codepointat --save-dev
           fi
-          # 安装安卓平台
-          phonegap platform add android@9.0.0 --verbose
+          
+          # 4. 返回项目根目录
+          cd ../../..
           cd ..
 
       - name: 复制项目文件
@@ -50,12 +56,13 @@ jobs:
           cp config.xml myapp/
           cp config.txt myapp/www/
 
-      - name: 编译APK（最后一步！）
+      - name: 编译APK（依赖全齐，必成！）
         run: |
           cd myapp
-          echo "🔥 自动匹配依赖版本，编译必成！"
+          echo "🔥 平台依赖已补全，开始编译！"
           phonegap build android --release --verbose
           
+          # 检查APK是否生成
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
