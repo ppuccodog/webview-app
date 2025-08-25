@@ -1,4 +1,4 @@
-name: 构建安卓应用（彻底解决目录移动问题）
+name: 构建安卓应用（双JDK精准匹配）
 on:
   workflow_dispatch:
 
@@ -14,52 +14,60 @@ jobs:
         with:
           node-version: 14
 
-      - name: 安装全局依赖
+      - name: 全局安装依赖
         run: |
           npm config set registry https://registry.npmjs.org/
           npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
 
-      - name: 安装JDK 8
-        uses: actions/setup-java@v4
-        with:
-          java-version: '8'
-          distribution: 'temurin'
-
-      - name: 安装安卓SDK（不移动任何目录）
+      - name: 提前安装JDK 8和11（双版本准备）
         run: |
-          # 1. 创建SDK目录
-          mkdir -p $HOME/android-sdk
+          # 安装JDK 11（用于运行SDK工具）
+          sudo apt-get update
+          sudo apt-get install openjdk-11-jdk -y
+          # 安装JDK 8（用于编译Cordova）
+          sudo apt-get install openjdk-8-jdk -y
+          # 查看安装路径
+          echo "JDK 8路径：/usr/lib/jvm/java-8-openjdk-amd64"
+          echo "JDK 11路径：/usr/lib/jvm/java-11-openjdk-amd64"
+
+      - name: 用JDK 11安装安卓SDK（关键！）
+        run: |
+          # 1. 切换到JDK 11（运行SDK工具必须）
+          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:$PATH
+          java -version  # 验证版本（应显示11.x）
           
-          # 2. 下载并解压SDK工具（保持原始结构）
+          # 2. 安装SDK工具（用JDK 11运行）
+          mkdir -p $HOME/android-sdk
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
           unzip -q sdk-tools.zip -d $HOME/android-sdk/cmdline-tools
           
-          # 3. 直接使用原始路径，不创建latest子目录
+          # 3. 执行sdkmanager（JDK 11兼容）
           SDK_MANAGER=$HOME/android-sdk/cmdline-tools/cmdline-tools/bin/sdkmanager
-          echo "✅ sdkmanager路径：$SDK_MANAGER"
+          echo "y" | $SDK_MANAGER --licenses
+          $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
           
-          # 4. 接受许可证并安装必要组件
-          echo "y" | SKIP_JDK_VERSION_CHECK=1 $SDK_MANAGER --licenses
-          SKIP_JDK_VERSION_CHECK=1 $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
-          
-          # 5. 配置环境变量
+          # 4. 保存SDK路径
           echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
-          echo "$HOME/android-sdk/cmdline-tools/cmdline-tools/bin" >> $GITHUB_PATH
-          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
 
-      - name: 安装Gradle
+      - name: 安装Gradle 7.0
         run: |
           wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
           unzip -q gradle-7.0-bin.zip
           echo "GRADLE_HOME=$(pwd)/gradle-7.0" >> $GITHUB_ENV
-          echo "$(pwd)/gradle-7.0/bin" >> $GITHUB_PATH
 
-      - name: 创建并编译项目
+      - name: 用JDK 8编译Cordova（关键！）
         run: |
+          # 切换回JDK 8（Cordova编译必须）
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:$PATH
+          java -version  # 验证版本（应显示1.8.x）
+          
+          # 创建并编译项目
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           
-          # 配置文件
+          # 极简配置文件
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
@@ -67,16 +75,19 @@ jobs:
             <access origin="*" />
           </widget>' > config.xml
           
-          # 添加平台并编译
-          cordova platform add android@9.0.0
+          # 添加平台+复制文件
+          ANDROID_SDK_ROOT=$HOME/android-sdk cordova platform add android@9.0.0
           cp -rf ../www/* www/
           cp ../config.txt www/
-          cordova build android --release
+          
+          # 编译APK（JDK 8+Gradle 7.0完美匹配）
+          GRADLE_HOME=$(pwd)/../gradle-7.0 cordova build android --release
           
           # 检查结果
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 成功生成APK！"
+            echo "🎉 终于成功了！APK生成了！"
           else
+            echo "❌ 最后一步失败，查看日志"
             exit 1
           fi
 
@@ -85,3 +96,4 @@ jobs:
         with:
           name: 我的安卓应用
           path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 30
