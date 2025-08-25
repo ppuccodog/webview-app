@@ -26,11 +26,16 @@ jobs:
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 安装系统Gradle（7.5版本）
+      - name: 手动安装官方Gradle 7.5（终极方案）
         run: |
-          sudo apt update
-          sudo apt install -y gradle=4.4.1-1ubuntu2  # Ubuntu仓库中的稳定版本
-          gradle --version  # 确认安装成功
+          # 从官方网站下载Gradle 7.5二进制包
+          wget https://services.gradle.org/distributions/gradle-7.5-bin.zip -O gradle-7.5-bin.zip
+          unzip -q gradle-7.5-bin.zip
+          # 配置环境变量，让系统识别gradle命令
+          export GRADLE_HOME=$(pwd)/gradle-7.5
+          export PATH=$GRADLE_HOME/bin:$PATH
+          # 确认安装成功
+          gradle --version && echo "✅ Gradle 7.5安装成功！"
 
       - name: 创建项目并安装安卓平台
         run: |
@@ -48,17 +53,20 @@ jobs:
           cp config.xml cordova-project/platforms/android/app/src/main/res/xml/
           cp config.txt cordova-project/platforms/android/app/src/main/assets/www/
 
-      - name: 用系统Gradle编译（彻底跳过wrapper）
+      - name: 用官方Gradle编译（最后一搏！）
         run: |
+          # 加载Gradle环境变量
+          export GRADLE_HOME=$(pwd)/gradle-7.5
+          export PATH=$GRADLE_HOME/bin:$PATH
+          
           cd cordova-project/platforms/android
-          echo "🔥 使用系统Gradle直接编译，再也不需要wrapper！"
-          # 直接用系统安装的gradle命令，不依赖任何脚本
+          echo "🔥 用官方Gradle 7.5直接编译，这次一定成！"
           gradle assembleRelease
           
           if [ -f "app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 终于成功了！APK生成了！"
+            echo "🎉 终于成功了！APK生成了！快去下载！"
           else
-            echo "❌ 最后检查错误"
+            echo "❌ 查看最后错误日志"
             exit 1
           fi
 
