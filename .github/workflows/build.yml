@@ -21,29 +21,49 @@ jobs:
         run: |
           npm cache clean -f
           npm install -g cordova@11.0.0
+          cordova -v  # 显示Cordova版本，确认安装成功
       
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
       
-      - name: 准备项目文件
+      - name: 准备项目文件并安装安卓平台
         run: |
-          # 创建Cordova项目
+          # 创建项目
           cordova create myapp com.my.simpleapp "我的网页APP"
-          # 复制我们的网页文件到Cordova项目中
+          
+          # 复制必要文件
           cp -r www myapp/
           cp config.xml myapp/
           cp config.txt myapp/www/
-          # 添加安卓平台
+          
+          # 进入项目目录
           cd myapp
-          cordova platform add android@10.1.2
-          cd ..  # 回到根目录
+          
+          # 安装安卓平台（带详细日志）
+          cordova platform add android@10.1.2 --verbose
+          
+          # 确认安卓平台是否安装成功
+          if [ -d "platforms/android" ]; then
+            echo "安卓平台安装成功"
+          else
+            echo "安卓平台安装失败"
+            exit 1
+          fi
+          
+          # 回到根目录
+          cd ..
       
-      - name: 强制使用低版本Gradle
+      - name: 配置Gradle版本
         run: |
-          # 明确从根目录开始的完整路径
-          cd myapp/platforms/android
-          mkdir -p gradle/wrapper
-          echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
+          # 确认目录存在后再操作
+          if [ -d "myapp/platforms/android" ]; then
+            cd myapp/platforms/android
+            mkdir -p gradle/wrapper
+            echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
+          else
+            echo "安卓平台目录不存在，无法配置Gradle"
+            exit 1
+          fi
       
       - name: 编译生成APK文件
         run: |
