@@ -1,4 +1,4 @@
-name: 构建安卓应用（双JDK精准匹配）
+name: 构建安卓应用（系统级JDK切换）
 on:
   workflow_dispatch:
 
@@ -19,55 +19,63 @@ jobs:
           npm config set registry https://registry.npmjs.org/
           npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
 
-      - name: 提前安装JDK 8和11（双版本准备）
+      - name: 安装JDK 8和11 + 系统级切换工具
         run: |
-          # 安装JDK 11（用于运行SDK工具）
+          # 安装两个JDK版本
           sudo apt-get update
-          sudo apt-get install openjdk-11-jdk -y
-          # 安装JDK 8（用于编译Cordova）
-          sudo apt-get install openjdk-8-jdk -y
-          # 查看安装路径
-          echo "JDK 8路径：/usr/lib/jvm/java-8-openjdk-amd64"
-          echo "JDK 11路径：/usr/lib/jvm/java-11-openjdk-amd64"
-
-      - name: 用JDK 11安装安卓SDK（关键！）
-        run: |
-          # 1. 切换到JDK 11（运行SDK工具必须）
-          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
-          export PATH=$JAVA_HOME/bin:$PATH
-          java -version  # 验证版本（应显示11.x）
+          sudo apt-get install openjdk-8-jdk openjdk-11-jdk -y
           
-          # 2. 安装SDK工具（用JDK 11运行）
+          # 配置系统级Java版本切换（优先级：JDK 11先生效）
+          sudo update-alternatives --install /usr/bin/java java /usr/lib/jvm/java-8-openjdk-amd64/bin/java 100
+          sudo update-alternatives --install /usr/bin/java java /usr/lib/jvm/java-11-openjdk-amd64/bin/java 200
+          sudo update-alternatives --install /usr/bin/javac javac /usr/lib/jvm/java-8-openjdk-amd64/bin/javac 100
+          sudo update-alternatives --install /usr/bin/javac javac /usr/lib/jvm/java-11-openjdk-amd64/bin/javac 200
+          
+          # 验证当前Java版本（应显示11.x）
+          echo "当前Java版本："
+          java -version
+          javac -version
+
+      - name: 用JDK 11安装安卓SDK（系统级生效）
+        run: |
+          # 1. 安装SDK工具
           mkdir -p $HOME/android-sdk
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
           unzip -q sdk-tools.zip -d $HOME/android-sdk/cmdline-tools
           
-          # 3. 执行sdkmanager（JDK 11兼容）
+          # 2. 执行sdkmanager（此时系统默认是JDK 11，100%兼容）
           SDK_MANAGER=$HOME/android-sdk/cmdline-tools/cmdline-tools/bin/sdkmanager
           echo "y" | $SDK_MANAGER --licenses
           $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
           
-          # 4. 保存SDK路径
+          # 3. 保存SDK路径
           echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+
+      - name: 切换回JDK 8（系统级切换，用于编译）
+        run: |
+          # 系统级切换到JDK 8
+          sudo update-alternatives --set java /usr/lib/jvm/java-8-openjdk-amd64/bin/java
+          sudo update-alternatives --set javac /usr/lib/jvm/java-8-openjdk-amd64/bin/javac
+          
+          # 验证切换结果（应显示1.8.x）
+          echo "切换后Java版本："
+          java -version
+          javac -version
 
       - name: 安装Gradle 7.0
         run: |
           wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
           unzip -q gradle-7.0-bin.zip
           echo "GRADLE_HOME=$(pwd)/gradle-7.0" >> $GITHUB_ENV
+          echo "$(pwd)/gradle-7.0/bin" >> $GITHUB_PATH
 
-      - name: 用JDK 8编译Cordova（关键！）
+      - name: 编译Cordova项目（JDK 8生效）
         run: |
-          # 切换回JDK 8（Cordova编译必须）
-          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
-          export PATH=$JAVA_HOME/bin:$PATH
-          java -version  # 验证版本（应显示1.8.x）
-          
-          # 创建并编译项目
+          # 创建项目
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           
-          # 极简配置文件
+          # 极简配置
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
@@ -75,19 +83,16 @@ jobs:
             <access origin="*" />
           </widget>' > config.xml
           
-          # 添加平台+复制文件
+          # 添加平台+编译
           ANDROID_SDK_ROOT=$HOME/android-sdk cordova platform add android@9.0.0
           cp -rf ../www/* www/
           cp ../config.txt www/
+          cordova build android --release
           
-          # 编译APK（JDK 8+Gradle 7.0完美匹配）
-          GRADLE_HOME=$(pwd)/../gradle-7.0 cordova build android --release
-          
-          # 检查结果
+          # 检查APK
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 最后一步失败，查看日志"
             exit 1
           fi
 
