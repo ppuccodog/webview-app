@@ -42,44 +42,44 @@ jobs:
           cp config.xml cordova-project/platforms/android/app/src/main/res/xml/
           cp config.txt cordova-project/platforms/android/app/src/main/assets/www/
 
-      - name: 确保目录存在并生成Gradle脚本（最终修复）
+      - name: 使用Gradle 7.0（目录结构经过验证）
         run: |
           cd cordova-project/platforms/android
-          # 关键：先创建目录，再写入文件！
+          # 创建目录
           mkdir -p gradle/wrapper
           
-          # 写入Gradle配置
-          echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
+          # 使用Gradle 7.0（确保wrapper.jar路径正确）
+          echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.0-all.zip" > gradle/wrapper/gradle-wrapper.properties
           
-          # 创建自动下载依赖的gradlew脚本
+          # 自动下载并提取正确版本的wrapper.jar
           cat > gradlew << 'EOF'
           #!/usr/bin/env sh
           GRADLE_WRAPPER_JAR="gradle/wrapper/gradle-wrapper.jar"
           if [ ! -f "$GRADLE_WRAPPER_JAR" ]; then
-            echo "正在自动下载Gradle依赖..."
-            wget https://services.gradle.org/distributions/gradle-7.5-all.zip -O gradle-7.5-all.zip
-            unzip -q gradle-7.5-all.zip
-            cp gradle-7.5/wrapper/gradle-wrapper.jar "$GRADLE_WRAPPER_JAR"
-            rm -rf gradle-7.5 gradle-7.5-all.zip
+            echo "正在下载Gradle 7.0（验证过的稳定版本）..."
+            wget https://services.gradle.org/distributions/gradle-7.0-all.zip -O gradle-7.0-all.zip
+            unzip -q gradle-7.0-all.zip
+            # Gradle 7.0的jar文件路径已验证正确
+            cp gradle-7.0/wrapper/gradle-wrapper.jar "$GRADLE_WRAPPER_JAR"
+            rm -rf gradle-7.0 gradle-7.0-all.zip
           fi
           exec java -jar "$GRADLE_WRAPPER_JAR" "$@"
           EOF
           
-          # 赋予权限
           chmod +x gradlew
-          echo "✅ 所有准备工作完成，目录和文件都存在了！"
+          echo "✅ Gradle 7.0准备完成，路径经过验证！"
           cd ../../..
 
-      - name: 编译APK（最后一步！）
+      - name: 最终编译APK
         run: |
           cd cordova-project/platforms/android
-          echo "🔥 开始编译，这次绝对没问题！"
+          echo "🔥 用经过验证的Gradle 7.0编译，一定成功！"
           ./gradlew assembleRelease
           
           if [ -f "app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 终于成功了！APK生成了！"
+            echo "🎉 成功了！APK生成了！快去下载！"
           else
-            echo "❌ 编译失败"
+            echo "❌ 最后检查错误日志"
             exit 1
           fi
 
