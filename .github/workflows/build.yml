@@ -17,21 +17,24 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局安装所有依赖（彻底避开路径）
+      - name: 全局安装所有依赖
         run: |
           npm config set registry https://registry.npmjs.org/
-          # 1. 全局安装Cordova
           npm install -g cordova@10.0.0
-          # 2. 全局安装缺失模块（Node.js任何地方都能找到）
           npm install -g properties-parser@0.6.0 string.prototype.codepointat@1.0.1
-          # 确认安装成功
           cordova -v
-          npm list -g properties-parser
+
+      - name: 安装JDK 8（关键！Cordova 10必须用JDK 8）
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+          cache: maven
 
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 安装Gradle并配置环境变量
+      - name: 安装Gradle并配置环境
         run: |
           wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
           unzip -q gradle-7.0-bin.zip
@@ -39,44 +42,35 @@ jobs:
           echo "$(pwd)/gradle-7.0/bin" >> $GITHUB_PATH
           gradle --version
 
-      - name: 创建项目+添加平台（全程不进子目录）
+      - name: 创建项目+添加平台
         run: |
-          # 1. 创建Cordova项目（一步完成）
           cordova create myapp com.my.simpleapp "我的网页APP"
-          
-          # 2. 进入项目根目录，添加安卓平台（只进myapp，不进更深目录）
           cd myapp
           cordova platform add android@9.0.0
-          
-          # 3. 清理多余插件配置（重写config.xml，无任何插件）
+          # 重写config.xml
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
             <content src="index.html" />
             <access origin="*" />
-            <allow-intent href="http://*/*" />
-            <allow-intent href="https://*/*" />
           </widget>' > config.xml
-          
           cd ..
 
-      - name: 复制网页文件（简单覆盖）
+      - name: 复制网页文件
         run: |
           cp -rf www/* myapp/www/
-          cp config.txt myapp/www/  # 复制你的配置文件
+          cp config.txt myapp/www/
 
-      - name: 编译APK（全程用全局依赖）
+      - name: 编译APK（JDK 8已就绪）
         run: |
           cd myapp
-          echo "🔥 全局依赖已就绪，开始编译！"
-          # 直接编译，不做任何目录操作
+          echo "🔥 JDK 8 + 全局依赖，编译必成！"
           cordova build android --release
           
-          # 检查APK是否生成（路径固定）
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 最后一步失败，查看Gradle日志"
+            echo "❌ 查看日志"
             exit 1
           fi
 
