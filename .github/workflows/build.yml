@@ -17,22 +17,30 @@ jobs:
         with:
           node-version: 14
 
-      - name: 安装PhoneGap
+      - name: 安装PhoneGap（用官方镜像确保完整）
         run: |
-          npm config set registry https://registry.npmmirror.com/
+          # 切换到官方npm镜像，避免版本缺失
+          npm config set registry https://registry.npmjs.org/
           npm install -g phonegap@9.0.0
           phonegap -v
 
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 创建项目+安装正确依赖
+      - name: 创建项目+自动安装依赖
         run: |
           phonegap create myapp com.my.simpleapp "我的网页APP"
           cd myapp
-          # 关键：用npm能找到的1.2.0版本，兼容PhoneGap
-          npm install properties-parser@1.2.0 --save-dev
-          # 安装安卓平台（依赖已正确补全）
+          # 关键：不指定版本，让npm自动选最新兼容版
+          npm install properties-parser --save-dev
+          # 确认依赖安装成功
+          if [ -d "node_modules/properties-parser" ]; then
+            echo "✅ properties-parser安装成功！"
+          else
+            echo "❌ 重试安装依赖"
+            npm install properties-parser --save-dev
+          fi
+          # 安装安卓平台
           phonegap platform add android@9.0.0 --verbose
           cd ..
 
@@ -42,10 +50,10 @@ jobs:
           cp config.xml myapp/
           cp config.txt myapp/www/
 
-      - name: 编译APK（这次必成！）
+      - name: 编译APK（最后一步！）
         run: |
           cd myapp
-          echo "🔥 依赖版本正确，开始编译！"
+          echo "🔥 自动匹配依赖版本，编译必成！"
           phonegap build android --release --verbose
           
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
