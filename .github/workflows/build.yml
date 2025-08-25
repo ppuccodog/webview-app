@@ -26,68 +26,56 @@ jobs:
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 创建项目+精准补全平台依赖（增加重试）
+      - name: 先补依赖再装平台（彻底解决顺序问题）
         run: |
-          # 1. 创建项目
+          # 1. 创建空项目
           phonegap create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           
-          # 2. 安装安卓平台（增加重试，避免网络波动导致文件不完整）
-          platform_install_count=0
-          while [ $platform_install_count -lt 2 ]; do
-            phonegap platform add android@9.0.0 --verbose
-            if [ -d "platforms/android" ]; then
-              echo "✅ 安卓平台安装成功！"
-              break
-            else
-              echo "❌ 平台安装失败，重试第 $((platform_install_count + 2)) 次"
-              platform_install_count=$((platform_install_count + 1))
-              rm -rf platforms  # 清理残留文件
-            fi
-          done
+          # 2. 关键：先手动创建安卓平台的cordova目录（提前准备好依赖目录）
+          mkdir -p platforms/android/cordova
           
-          # 3. 进入平台cordova目录，补全依赖（精准定位）
+          # 3. 先进入目录补全依赖（此时还没装平台，插件不会自动安装）
           cd platforms/android/cordova
           npm install properties-parser string.prototype.codepointat --save-dev
-          
-          # 4. 双重确认依赖存在
+          # 确认依赖存在
           if [ -d "node_modules/properties-parser" ] && [ -d "node_modules/string.prototype.codepointat" ]; then
-            echo "✅ 所有依赖安装成功！"
+            echo "✅ 依赖提前安装成功！"
           else
             echo "❌ 重试安装依赖"
             npm install properties-parser string.prototype.codepointat --save-dev
           fi
+          cd ../../..  # 返回项目根目录
           
-          # 5. 返回根目录
-          cd ../../..
-          cd ..
+          # 4. 现在再安装安卓平台（此时依赖已存在，插件安装不会报错）
+          phonegap platform add android@9.0.0 --verbose
+          
+          cd ..  # 返回上级目录
 
-      - name: 复制项目文件（确保覆盖完整）
+      - name: 复制项目文件
         run: |
-          # 覆盖默认网页文件，确保我们的代码生效
           cp -rf www/* myapp/www/
           cp config.xml myapp/
           cp config.txt myapp/www/
-          echo "✅ 项目文件复制完成！"
+          echo "✅ 文件复制完成！"
 
-      - name: 编译APK（依赖全齐，必成！）
+      - name: 编译APK（顺序正确，依赖全齐！）
         run: |
           cd myapp
-          echo "🔥 所有准备就绪，开始编译！"
-          # 执行编译，显示详细日志便于排查最后问题
+          echo "🔥 依赖提前安装，平台和插件正常，开始编译！"
           phonegap build android --release --verbose
           
-          # 检查APK是否生成（路径100%匹配）
+          # 检查APK
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
           else
-            echo "❌ 编译失败，查看上方详细日志（重点看Gradle相关错误）"
+            echo "❌ 查看Gradle日志"
             exit 1
           fi
 
-      - name: 上传APK（确保能下载）
+      - name: 上传APK
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
           path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
-          retention-days: 30  # 保留30天，方便下载
+          retention-days: 30
