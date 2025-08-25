@@ -1,4 +1,4 @@
-name: 构建安卓应用（系统级JDK切换）
+name: 构建安卓应用（Gradle降级适配JDK 8）
 on:
   workflow_dispatch:
 
@@ -19,75 +19,66 @@ jobs:
           npm config set registry https://registry.npmjs.org/
           npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
 
-      - name: 安装JDK 8和11 + 系统级切换工具
+      - name: 安装JDK 8和11 + 系统级切换
         run: |
-          # 安装两个JDK版本
           sudo apt-get update
           sudo apt-get install openjdk-8-jdk openjdk-11-jdk -y
-          
-          # 配置系统级Java版本切换（优先级：JDK 11先生效）
+          # 配置切换（JDK 11优先）
           sudo update-alternatives --install /usr/bin/java java /usr/lib/jvm/java-8-openjdk-amd64/bin/java 100
           sudo update-alternatives --install /usr/bin/java java /usr/lib/jvm/java-11-openjdk-amd64/bin/java 200
           sudo update-alternatives --install /usr/bin/javac javac /usr/lib/jvm/java-8-openjdk-amd64/bin/javac 100
           sudo update-alternatives --install /usr/bin/javac javac /usr/lib/jvm/java-11-openjdk-amd64/bin/javac 200
-          
-          # 验证当前Java版本（应显示11.x）
-          echo "当前Java版本："
+          # 验证JDK 11
           java -version
-          javac -version
 
-      - name: 用JDK 11安装安卓SDK（系统级生效）
+      - name: 用JDK 11安装安卓SDK
         run: |
-          # 1. 安装SDK工具
           mkdir -p $HOME/android-sdk
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
           unzip -q sdk-tools.zip -d $HOME/android-sdk/cmdline-tools
-          
-          # 2. 执行sdkmanager（此时系统默认是JDK 11，100%兼容）
           SDK_MANAGER=$HOME/android-sdk/cmdline-tools/cmdline-tools/bin/sdkmanager
           echo "y" | $SDK_MANAGER --licenses
           $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
-          
-          # 3. 保存SDK路径
           echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
 
-      - name: 切换回JDK 8（系统级切换，用于编译）
+      - name: 切换回JDK 8（编译必须）
         run: |
-          # 系统级切换到JDK 8
           sudo update-alternatives --set java /usr/lib/jvm/java-8-openjdk-amd64/bin/java
           sudo update-alternatives --set javac /usr/lib/jvm/java-8-openjdk-amd64/bin/javac
-          
-          # 验证切换结果（应显示1.8.x）
-          echo "切换后Java版本："
+          # 验证JDK 8
           java -version
-          javac -version
 
-      - name: 安装Gradle 7.0
+      - name: 安装Gradle 6.9（JDK 8完美兼容版本）
         run: |
-          wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
-          unzip -q gradle-7.0-bin.zip
-          echo "GRADLE_HOME=$(pwd)/gradle-7.0" >> $GITHUB_ENV
-          echo "$(pwd)/gradle-7.0/bin" >> $GITHUB_PATH
+          # 关键：用Gradle 6.9替代7.0，解决类文件版本冲突
+          wget https://services.gradle.org/distributions/gradle-6.9-bin.zip -O gradle-6.9-bin.zip
+          unzip -q gradle-6.9-bin.zip
+          echo "GRADLE_HOME=$(pwd)/gradle-6.9" >> $GITHUB_ENV
+          echo "$(pwd)/gradle-6.9/bin" >> $GITHUB_PATH
+          gradle --version
 
-      - name: 编译Cordova项目（JDK 8生效）
+      - name: 编译Cordova项目（最终适配）
         run: |
-          # 创建项目
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           
-          # 极简配置
+          # 修复Gradle属性冲突
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
             <content src="index.html" />
             <access origin="*" />
+            <preference name="AndroidXEnabled" value="false" />
+            <preference name="GradlePluginKotlinVersion" value="1.3.50" />
           </widget>' > config.xml
           
-          # 添加平台+编译
+          # 添加平台并编译
           ANDROID_SDK_ROOT=$HOME/android-sdk cordova platform add android@9.0.0
           cp -rf ../www/* www/
           cp ../config.txt www/
-          cordova build android --release
+          
+          # 强制使用指定的Gradle版本
+          GRADLE_HOME=$(pwd)/../gradle-6.9 cordova build android --release
           
           # 检查APK
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
