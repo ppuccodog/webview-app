@@ -15,12 +15,12 @@ jobs:
       - name: 安装Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 16  # 使用更稳定的Node.js版本
+          node-version: 16
       
       - name: 安装Cordova
         run: |
           npm cache clean -f
-          npm install -g cordova@11.0.0  # 使用指定版本的Cordova
+          npm install -g cordova@11.0.0
       
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
@@ -32,11 +32,15 @@ jobs:
           cp -r ../www www/
           cp ../config.xml .
           cp ../config.txt www/
-          cordova platform add android@10.1.2  # 使用更稳定的安卓平台版本
+          cordova platform add android@10.1.2
       
       - name: 强制使用低版本Gradle
         run: |
+          # 修正路径，从项目根目录开始
           cd app/platforms/android
+          # 如果gradle文件夹不存在则创建
+          mkdir -p gradle/wrapper
+          # 写入正确的Gradle版本配置
           echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
       
       - name: 编译生成APK文件
