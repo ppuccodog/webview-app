@@ -27,29 +27,31 @@ jobs:
       
       - name: 准备项目文件
         run: |
-          cordova create app com.my.simpleapp "我的网页APP"
-          cd app
-          cp -r ../www www/
-          cp ../config.xml .
-          cp ../config.txt www/
+          # 创建Cordova项目
+          cordova create myapp com.my.simpleapp "我的网页APP"
+          # 复制我们的网页文件到Cordova项目中
+          cp -r www myapp/
+          cp config.xml myapp/
+          cp config.txt myapp/www/
+          # 添加安卓平台
+          cd myapp
           cordova platform add android@10.1.2
+          cd ..  # 回到根目录
       
       - name: 强制使用低版本Gradle
         run: |
-          # 修正路径，从项目根目录开始
-          cd app/platforms/android
-          # 如果gradle文件夹不存在则创建
+          # 明确从根目录开始的完整路径
+          cd myapp/platforms/android
           mkdir -p gradle/wrapper
-          # 写入正确的Gradle版本配置
           echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
       
       - name: 编译生成APK文件
         run: |
-          cd app
+          cd myapp
           cordova build android --release
       
       - name: 保存生成的APP
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
-          path: app/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
