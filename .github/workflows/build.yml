@@ -17,63 +17,33 @@ jobs:
         with:
           node-version: 14
 
-      - name: 安装Cordova 10
+      - name: 安装PhoneGap（Cordova的替代方案）
         run: |
           npm config set registry https://registry.npmmirror.com/
-          npm install -g cordova@10.0.0
-          cordova -v
+          npm install -g phonegap@9.0.0
+          phonegap -v
 
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      - name: 安装Gradle 7.0
+      - name: 创建PhoneGap项目
         run: |
-          wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
-          unzip -q gradle-7.0-bin.zip
-          export GRADLE_HOME=$(pwd)/gradle-7.0
-          export PATH=$GRADLE_HOME/bin:$PATH
-          gradle --version
-
-      - name: 手动下载完整安卓平台包
-        run: |
-          # 创建项目目录
-          mkdir -p cordova-project && cd cordova-project
-          cordova create . com.my.simpleapp "我的网页APP"
-          
-          # 手动下载安卓平台9.1.0完整包（确保Api.js存在）
-          npm install cordova-android@9.1.0 --save-dev
-          
-          # 手动复制平台文件到指定目录
-          mkdir -p platforms/android
-          cp -r node_modules/cordova-android/* platforms/android/
-          
-          # 确认Api.js存在
-          if [ -f "platforms/android/cordova/Api.js" ]; then
-            echo "✅ 安卓平台API文件存在！"
-          else
-            echo "❌ 紧急：Api.js还是缺失，重试下载"
-            npm install cordova-android@9.1.0 --save-dev
-            cp -r node_modules/cordova-android/* platforms/android/
-          fi
-          
+          phonegap create myapp com.my.simpleapp "我的网页APP"
+          cd myapp
+          phonegap platform add android@9.0.0 --verbose
           cd ..
 
       - name: 复制项目文件
         run: |
-          mkdir -p cordova-project/platforms/android/app/src/main/assets/www/
-          mkdir -p cordova-project/platforms/android/app/src/main/res/xml/
-          cp -r www/* cordova-project/platforms/android/app/src/main/assets/www/
-          cp config.xml cordova-project/platforms/android/app/src/main/res/xml/
-          cp config.txt cordova-project/platforms/android/app/src/main/assets/www/
+          cp -r www/* myapp/www/
+          cp config.xml myapp/www/
+          cp config.txt myapp/www/
 
-      - name: 最终编译（手动确保API文件存在）
+      - name: 编译APK（PhoneGap简化流程）
         run: |
-          cd cordova-project
-          export GRADLE_HOME=$(pwd)/../gradle-7.0
-          export PATH=$GRADLE_HOME/bin:$PATH
-          
-          echo "🔥 手动确保了Api.js存在，这次一定成功！"
-          cordova build android --release
+          cd myapp
+          echo "🔥 使用PhoneGap简化流程编译，避开所有Cordova API问题！"
+          phonegap build android --release
           
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 终于成功了！APK生成了！"
@@ -86,4 +56,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
-          path: cordova-project/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
