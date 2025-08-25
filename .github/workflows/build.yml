@@ -1,71 +1,68 @@
-name: 构建安卓应用（彻底放弃手动SDK）
+name: 构建安卓应用（官方环境方案）
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04  # 使用更稳定的旧版本系统
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
 
-      - name: 安装Node.js 14 + 全局依赖
+      - name: 安装Node.js 14
+        uses: actions/setup-node@v4
+        with:
+          node-version: 14
+
+      - name: 安装Cordova和依赖
         run: |
           npm config set registry https://registry.npmjs.org/
-          npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
-          cordova -v
+          npm install -g cordova@10.0.0
+          npm install -g properties-parser@0.6.0 string.prototype.codepointat@1.0.1
 
-      - name: 安装JDK 8（系统自带，稳定）
-        run: |
-          sudo apt-get update
-          sudo apt-get install openjdk-8-jdk -y
-          echo "JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64" >> $GITHUB_ENV
+      - name: 安装Java 8
+        uses: actions/setup-java@v3
+        with:
+          java-version: '8'
+          distribution: 'temurin'
 
-      - name: 安装系统预装安卓SDK（不手动下载）
-        run: |
-          # 直接用Ubuntu自带的SDK工具，避免手动解压
-          sudo apt-get install android-sdk-platform-tools android-sdk-build-tools -y
-          # 安装Cordova需要的Android 29平台
-          echo "y" | SKIP_JDK_VERSION_CHECK=1 /usr/lib/android-sdk/tools/bin/sdkmanager "platforms;android-29"
-          echo "ANDROID_SDK_ROOT=/usr/lib/android-sdk" >> $GITHUB_ENV
+      - name: 安装安卓环境（用官方脚本自动配置）
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r21e
+          add-to-path: false
+          api-level: 29
+          build-tools-version: 29.0.3
 
-      - name: 安装Gradle 7.0（直接用）
+      - name: 创建并编译项目
         run: |
-          wget https://services.gradle.org/distributions/gradle-7.0-bin.zip -O gradle-7.0-bin.zip
-          unzip -q gradle-7.0-bin.zip
-          echo "GRADLE_HOME=$(pwd)/gradle-7.0" >> $GITHUB_ENV
-
-      - name: 快速创建+编译（全程无手动目录操作）
-        run: |
-          # 1. 创建项目
+          # 创建项目
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           
-          # 2. 重写config.xml（无插件）
-          cat > config.xml << EOF
-          <?xml version='1.0' encoding='utf-8'?>
+          # 清除所有插件配置
+          echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
             <content src="index.html" />
             <access origin="*" />
-          </widget>
-          EOF
+          </widget>' > config.xml
           
-          # 3. 添加平台（用系统SDK）
-          ANDROID_SDK_ROOT=/usr/lib/android-sdk cordova platform add android@9.0.0
+          # 添加安卓平台（使用自动配置的环境）
+          cordova platform add android@9.0.0
           
-          # 4. 复制文件
+          # 复制网页文件
           cp -rf ../www/* www/
           cp ../config.txt www/
           
-          # 5. 编译（所有路径都用系统默认）
-          JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64 ANDROID_SDK_ROOT=/usr/lib/android-sdk GRADLE_HOME=$(pwd)/../gradle-7.0 cordova build android --release
+          # 编译APK
+          cordova build android --release
           
-          # 6. 检查APK
+          # 检查结果
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 终于成功了！"
+            echo "🎉 APK生成成功！"
           else
-            echo "❌ 查看日志"
+            echo "❌ 编译失败"
             exit 1
           fi
 
@@ -74,3 +71,4 @@ jobs:
         with:
           name: 我的安卓应用
           path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 30
