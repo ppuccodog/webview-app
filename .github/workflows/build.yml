@@ -1,69 +1,121 @@
 name: 构建安卓应用
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ main ]  # 代码推送时自动编译
+  workflow_dispatch:    # 支持手动触发编译
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest  # 使用云端Ubuntu系统编译
     
     steps:
+      # 步骤1：拉取仓库代码
       - name: 拉取仓库代码
         uses: actions/checkout@v4
-      
+
+      # 步骤2：安装Node.js（Cordova依赖环境）
       - name: 安装Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 16
-      
-      - name: 安装Cordova
+          node-version: 16  # 稳定版本，避免兼容性问题
+
+      # 步骤3：切换国内npm镜像+安装Cordova（解决网络下载失败）
+      - name: 切换国内npm镜像并安装Cordova
         run: |
+          # 切换到淘宝npm镜像（国内速度快，避免超时）
+          npm config set registry https://registry.npmmirror.com/
+          # 清除npm缓存，避免旧缓存干扰
           npm cache clean -f
+          # 第一次尝试安装Cordova 11.0.0
+          echo "第一次尝试安装Cordova..."
           npm install -g cordova@11.0.0
-          cordova -v
-      
+          # 检查Cordova是否安装成功（显示版本号）
+          cordova -v && echo "✅ Cordova安装成功" || echo "❌ 第一次安装失败，重试一次"
+          
+          # 重试机制：如果第一次安装失败，再次尝试
+          if ! command -v cordova &> /dev/null; then
+            echo "正在重试安装Cordova..."
+            npm install -g cordova@11.0.0
+            cordova -v && echo "✅ 重试后Cordova安装成功" || (echo "❌ 两次安装均失败" && exit 1)
+          fi
+
+      # 步骤4：安装安卓编译环境（SDK）
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
-      
-      - name: 第一步：创建项目并安装安卓平台
+
+      # 步骤5：创建Cordova项目+安装安卓平台（生成必要文件夹）
+      - name: 创建项目并安装安卓平台
         run: |
+          # 创建Cordova项目（名称、包名按需求修改）
           cordova create myapp com.my.simpleapp "我的网页APP"
+          
+          # 进入项目目录，安装安卓平台（提前设置镜像，确保依赖下载成功）
           cd myapp
-          cordova platform add android@10.1.2 --verbose
-          cd ..
-      
-      - name: 第二步：先创建目标文件夹（关键修复）
+          npm config set registry https://registry.npmmirror.com/  # 再次设置镜像，避免依赖下载失败
+          echo "正在安装安卓平台..."
+          cordova platform add android@10.1.2 --verbose  # 带详细日志，方便排查
+          cd ..  # 回到根目录
+          
+          # 确认安卓平台文件夹是否生成
+          if [ -d "myapp/platforms/android" ]; then
+            echo "✅ 安卓平台安装成功，文件夹已生成"
+          else
+            echo "❌ 安卓平台安装失败，未找到platforms文件夹"
+            exit 1
+          fi
+
+      # 步骤6：手动创建目标文件夹（避免复制文件时路径不存在）
+      - name: 创建文件复制所需的目标文件夹
         run: |
-          # 手动创建assets目录（确保存在，避免复制失败）
+          # 创建assets目录（存放网页资源）
           mkdir -p myapp/platforms/android/app/src/main/assets/
-          # 手动创建res/xml目录（存放config.xml）
+          # 创建res/xml目录（存放APP配置文件）
           mkdir -p myapp/platforms/android/app/src/main/res/xml/
-          # 手动创建www目录（存放网页文件）
+          # 创建www目录（存放我们的HTML/JS/CSS文件）
           mkdir -p myapp/platforms/android/app/src/main/assets/www/
-      
-      - name: 第三步：再复制文件（此时目录已存在）
+          echo "✅ 所有目标文件夹创建完成"
+
+      # 步骤7：复制我们的网页文件和配置文件到安卓项目中
+      - name: 复制项目文件到安卓目录
         run: |
-          # 复制网页文件到assets目录
+          # 复制www文件夹下的所有网页文件（index.html等）
           cp -r www/* myapp/platforms/android/app/src/main/assets/www/
-          # 复制config.xml到res/xml目录
+          # 复制config.xml（APP名称、权限等配置）
           cp config.xml myapp/platforms/android/app/src/main/res/xml/
-          # 复制网址配置文件到www目录
+          # 复制config.txt（网址配置文件，后续可修改）
           cp config.txt myapp/platforms/android/app/src/main/assets/www/
-      
-      - name: 配置Gradle版本
+          echo "✅ 所有文件复制完成"
+
+      # 步骤8：配置兼容的Gradle版本（解决之前的编译语法错误）
+      - name: 配置Gradle 7.5版本（兼容Cordova）
         run: |
+          # 进入安卓项目的Gradle目录
           cd myapp/platforms/android
+          # 确保Gradle wrapper文件夹存在
           mkdir -p gradle/wrapper
+          # 写入兼容的Gradle版本（避免高版本Gradle报错）
           echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
-      
-      - name: 编译APK
+          echo "✅ Gradle版本配置完成"
+
+      # 步骤9：编译生成安卓APK文件
+      - name: 编译生成APK
         run: |
+          # 进入Cordova项目目录
           cd myapp
+          echo "开始编译APK，首次编译可能需要10-15分钟..."
+          # 执行编译命令（release版本，适合安装）
           cordova build android --release
-      
-      - name: 保存APK
+          # 确认APK是否生成
+          if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
+            echo "✅ APK编译成功"
+          else
+            echo "❌ APK编译失败"
+            exit 1
+          fi
+
+      # 步骤10：保存APK文件，方便下载
+      - name: 上传APK文件供下载
         uses: actions/upload-artifact@v4
         with:
-          name: 我的安卓应用
-          path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          name: 我的安卓应用  # 下载时显示的文件名称
+          path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk  # APK的实际路径
