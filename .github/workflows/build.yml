@@ -13,77 +13,88 @@ jobs:
       - name: 拉取仓库代码
         uses: actions/checkout@v4
 
-      # 步骤2：安装Node.js
+      # 步骤2：安装Node.js（稳定版）
       - name: 安装Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 16
 
-      # 步骤3：切换国内npm镜像+安装Cordova
-      - name: 切换国内npm镜像并安装Cordova
+      # 步骤3：切换国内镜像+安装Cordova（确保下载成功）
+      - name: 安装Cordova（国内镜像）
         run: |
           npm config set registry https://registry.npmmirror.com/
           npm cache clean -f
           npm install -g cordova@11.0.0
-          cordova -v || (echo "Cordova安装失败，重试" && npm install -g cordova@11.0.0)
+          # 确认安装成功（显示版本号）
+          cordova -v && echo "✅ Cordova安装成功" || (echo "❌ 重试安装" && npm install -g cordova@11.0.0)
 
-      # 步骤4：安装安卓SDK
+      # 步骤4：安装安卓SDK（编译环境）
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      # 步骤5：直接安装安卓平台（不绕myapp，避免路径混乱）
-      - name: 直接安装安卓平台（根目录生成platforms）
+      # 步骤5：根目录创建项目+安装安卓平台（Cordova 11支持的命令）
+      - name: 根目录创建项目并安装安卓平台
         run: |
-          # 无需创建myapp，直接在根目录初始化并安装安卓平台
-          cordova init . com.my.simpleapp "我的网页APP"  # 根目录初始化项目
+          # 关键：用create命令在根目录创建项目（.代表当前目录）
+          cordova create . com.my.simpleapp "我的网页APP"
+          
+          # 安装安卓平台（这次platforms一定在根目录）
           npm config set registry https://registry.npmmirror.com/
           cordova platform add android@10.1.2 --verbose
           
           # 检查根目录platforms（日志实际生成路径）
           if [ -d "platforms/android" ]; then
-            echo "✅ 安卓平台安装成功！路径：根目录/platforms/android"
+            echo "✅ 安卓平台安装成功！路径正确"
           else
             echo "❌ 安卓平台安装失败"
             exit 1
           fi
 
-      # 步骤6：创建目标文件夹（根目录platforms）
-      - name: 创建文件复制目录
+      # 步骤6：创建文件复制目录（避免路径不存在）
+      - name: 创建目标文件夹
         run: |
           mkdir -p platforms/android/app/src/main/assets/www/
           mkdir -p platforms/android/app/src/main/res/xml/
 
-      # 步骤7：复制文件到根目录platforms
-      - name: 复制网页和配置文件
+      # 步骤7：复制我们的网页和配置文件
+      - name: 复制文件到安卓项目
         run: |
+          # 复制index.html等网页文件
           cp -r www/* platforms/android/app/src/main/assets/www/
+          # 复制APP配置文件
           cp config.xml platforms/android/app/src/main/res/xml/
+          # 复制网址配置文件
           cp config.txt platforms/android/app/src/main/assets/www/
+          echo "✅ 文件复制完成"
 
-      # 步骤8：配置Gradle 7.5（根目录platforms）
-      - name: 配置Gradle版本
+      # 步骤8：配置兼容的Gradle版本（解决编译错误）
+      - name: 配置Gradle 7.5
         run: |
           cd platforms/android
           mkdir -p gradle/wrapper
+          # 写入兼容的Gradle版本，避免语法错误
           echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
+          echo "✅ Gradle配置完成"
 
-      # 步骤9：编译APK（根目录执行Cordova命令）
-      - name: 编译生成APK
+      # 步骤9：编译生成APK（根目录执行，路径正确）
+      - name: 编译APK（首次约10分钟）
         run: |
-          echo "开始编译，首次约10分钟..."
-          cordova build android --release  # 根目录执行，自动找到platforms
+          echo "开始编译APK，耐心等待..."
+          # 根目录执行Cordova编译命令，自动找到所有文件
+          cordova build android --release
           
-          # 检查APK是否生成
+          # 确认APK是否生成
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "✅ APK编译成功！"
+            echo "🎉 APK编译成功！终于搞定了！"
           else
             echo "❌ APK编译失败"
             exit 1
           fi
 
-      # 步骤10：下载APK
-      - name: 上传APK
+      # 步骤10：上传APK，方便下载
+      - name: 上传APK文件
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
+          # APK实际路径（根目录platforms下）
           path: platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
