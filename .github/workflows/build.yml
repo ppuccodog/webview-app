@@ -1,4 +1,4 @@
-name: 构建安卓应用（修复依赖下载问题）
+name: 构建安卓应用（修复文件找不到问题）
 on:
   workflow_dispatch:
 
@@ -47,16 +47,17 @@ jobs:
           echo "GRADLE_HOME=$(pwd)/gradle-6.9" >> $GITHUB_ENV
           echo "$(pwd)/gradle-6.9/bin" >> $GITHUB_PATH
 
-      - name: 编译Cordova项目（添加Google仓库）
+      - name: 编译Cordova项目（调整步骤顺序）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           java -version
           
+          # 1. 创建项目
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
           
-          # 基础配置
+          # 2. 基础配置
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
@@ -65,28 +66,38 @@ jobs:
             <preference name="AndroidXEnabled" value="false" />
           </widget>' > config.xml
           
-          # 添加安卓平台
+          # 3. 添加安卓平台（确保平台文件生成）
           ANDROID_SDK_ROOT=$HOME/android-sdk cordova platform add android@9.0.0
           
-          # 复制网页文件
+          # 4. 验证文件是否存在
+          echo "检查Gradle文件是否存在..."
+          if [ -f "platforms/android/build.gradle" ] && [ -f "platforms/android/app/build.gradle" ]; then
+            echo "✅ 必要文件存在，可以修改配置"
+          else
+            echo "❌ 关键文件缺失，列出目录内容："
+            ls -R platforms/android
+            exit 1
+          fi
+          
+          # 5. 复制网页文件
           cp -rf ../www/* www/
           cp ../config.txt www/
           
-          # 关键修复：修改Gradle配置，添加Google仓库
+          # 6. 修复Gradle配置（确保文件存在后再修改）
           echo "修复Gradle配置..."
           # 修改项目级build.gradle
-          sed -i 's/maven { url "https:\/\/jcenter.bintray.com" }/maven { url "https:\/\/jcenter.bintray.com" }\n        maven { url "https:\/\/maven.google.com" }\n        maven { url "https:\/\/dl.google.com\/maven\/repo\/" }/' platforms/android/build.gradle
+          sed -i '/jcenter.bintray.com/a \        maven { url "https://maven.google.com" }\n        maven { url "https://dl.google.com/maven/repo/" }' platforms/android/build.gradle
           
           # 修改app级build.gradle
-          sed -i 's/dependencies {/dependencies {\n    implementation "com.g00fy2:versioncompare:1.3.4"/' platforms/android/app/build.gradle
+          sed -i '/dependencies {/a \    implementation "com.g00fy2:versioncompare:1.3.4"' platforms/android/app/build.gradle
           
-          # 强制Gradle使用JDK 8
+          # 7. 强制Gradle使用JDK 8
           echo "org.gradle.java.home=$JDK8_PATH" > platforms/android/gradle.properties
           
-          # 编译APK
+          # 8. 编译APK
           cordova build android --release
           
-          # 检查结果
+          # 9. 检查结果
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 成功生成APK！"
           else
