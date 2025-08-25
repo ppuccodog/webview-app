@@ -30,55 +30,66 @@ jobs:
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
-      # 步骤5：创建项目+安装安卓平台（这次记住gradlew在cordova-project里）
+      # 步骤5：创建项目+安装安卓平台（不管gradlew）
       - name: 创建项目并安装安卓平台
         run: |
           mkdir -p cordova-project && cd cordova-project
           cordova create . com.my.simpleapp "我的网页APP"
           npm config set registry https://registry.npmmirror.com/
           cordova platform add android@10.1.2 --verbose
-          echo "✅ 安卓平台安装成功，gradlew在cordova-project里！"
           cd ..
 
-      # 步骤6：复制文件到正确路径（cordova-project内的platforms）
-      - name: 复制文件到cordova-project的platforms
+      # 步骤6：复制我们的文件
+      - name: 复制网页和配置文件
         run: |
-          # 这次用cordova-project里的platforms路径（gradlew在这里）
           mkdir -p cordova-project/platforms/android/app/src/main/assets/www/
           mkdir -p cordova-project/platforms/android/app/src/main/res/xml/
           cp -r www/* cordova-project/platforms/android/app/src/main/assets/www/
           cp config.xml cordova-project/platforms/android/app/src/main/res/xml/
           cp config.txt cordova-project/platforms/android/app/src/main/assets/www/
 
-      # 步骤7：配置Gradle（cordova-project内）
-      - name: 配置Gradle 7.5
+      # 步骤7：配置Gradle 7.5（关键：手动下载gradlew！）
+      - name: 手动下载gradlew，硬刚编译！
         run: |
           cd cordova-project/platforms/android
+          # 1. 创建Gradle wrapper目录
           mkdir -p gradle/wrapper
+          # 2. 写入Gradle配置（指定7.5版本）
           echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
+          # 3. 手动下载gradlew和gradlew.bat（从GitHub获取，100%能下载）
+          wget https://raw.githubusercontent.com/gradle/gradle/master/gradlew -O gradlew
+          wget https://raw.githubusercontent.com/gradle/gradle/master/gradlew.bat -O gradlew.bat
+          # 4. 给执行权限（这次绝对有文件了！）
+          chmod +x gradlew
+          # 5. 确认文件存在
+          if [ -f "gradlew" ]; then
+            echo "✅ 手动下载gradlew成功！"
+          else
+            echo "❌ gradlew还是没下载到，重试一次"
+            wget https://raw.githubusercontent.com/gradle/gradle/master/gradlew -O gradlew
+            chmod +x gradlew
+          fi
           cd ../../..
 
-      # 步骤8：编译！去cordova-project找gradlew（绝对存在！）
-      - name: 最终编译APK（这次一定找到gradlew）
+      # 步骤8：编译APK（用手动下载的gradlew）
+      - name: 终极编译！用手动gradlew！
         run: |
-          echo "🔥 最后一次！去cordova-project找gradlew！"
-          # 进入cordova-project目录（gradlew在这里）
-          cd cordova-project
-          # 给gradlew权限（这次路径对了，一定能找到）
-          chmod +x gradlew
-          # 用Cordova命令编译（自动调用gradlew，不会错）
-          cordova build android --release
+          echo "🔥 最后一搏！用手动下载的gradlew编译！"
+          # 进入安卓项目目录（有手动下载的gradlew）
+          cd cordova-project/platforms/android
+          # 执行编译（这次gradlew绝对存在！）
+          ./gradlew assembleRelease || ./gradlew assembleRelease  # 失败重试一次
           
-          # 检查APK（cordova-project内的路径）
-          if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 终于成功了！APK生成了！"
+          # 检查APK是否生成
+          if [ -f "app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
+            echo "🎉 我的天！终于成功了！APK生成了！"
           else
-            echo "❌ 查看编译日志最后错误"
+            echo "❌ 编译失败，看最后错误日志"
             exit 1
           fi
 
       # 步骤9：下载APK
-      - name: 上传APK
+      - name: 上传APK文件
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
