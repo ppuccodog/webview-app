@@ -1,77 +1,62 @@
 name: 构建安卓应用
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ main ]  # 代码更新时自动编译
+  workflow_dispatch:    # 支持手动触发
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest  # 云端Ubuntu系统编译
     
     steps:
-      - name: 拉取代码
+      - name: 拉取仓库代码
         uses: actions/checkout@v4
       
-      - name: 安装Node.js
+      - name: 安装Node.js（Cordova依赖）
         uses: actions/setup-node@v4
         with:
-          node-version: 16
+          node-version: 16  # 稳定版本，避免兼容性问题
       
-      - name: 安装Cordova
+      - name: 安装Cordova（网页转APP工具）
         run: |
           npm cache clean -f
           npm install -g cordova@11.0.0
-          cordova -v  # 显示Cordova版本，确认安装成功
+          cordova -v  # 确认安装成功
       
-      - name: 安装安卓SDK
+      - name: 安装安卓编译环境（SDK）
         uses: android-actions/setup-android@v3
       
-      - name: 准备项目文件并安装安卓平台
+      - name: 准备项目并安装安卓平台
         run: |
-          # 创建项目
+          # 创建Cordova项目
           cordova create myapp com.my.simpleapp "我的网页APP"
           
-          # 复制必要文件
-          cp -r www myapp/
-          cp config.xml myapp/
-          cp config.txt myapp/www/
-          
-          # 进入项目目录
-          cd myapp
-          
-          # 安装安卓平台（带详细日志）
-          cordova platform add android@10.1.2 --verbose
+          # 复制网页文件到安卓项目的正确路径（匹配日志实际路径）
+          cp -r www platforms/android/app/src/main/assets/
+          cp config.xml platforms/android/app/src/main/res/xml/
+          cp config.txt platforms/android/app/src/main/assets/www/
           
           # 确认安卓平台是否安装成功
           if [ -d "platforms/android" ]; then
-            echo "安卓平台安装成功"
+            echo "✅ 安卓平台安装成功，路径正确"
           else
-            echo "安卓平台安装失败"
+            echo "❌ 安卓平台安装失败"
             exit 1
           fi
-          
-          # 回到根目录
-          cd ..
       
-      - name: 配置Gradle版本
+      - name: 配置兼容的Gradle版本（解决编译错误）
         run: |
-          # 确认目录存在后再操作
-          if [ -d "myapp/platforms/android" ]; then
-            cd myapp/platforms/android
-            mkdir -p gradle/wrapper
-            echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
-          else
-            echo "安卓平台目录不存在，无法配置Gradle"
-            exit 1
-          fi
+          cd platforms/android
+          mkdir -p gradle/wrapper
+          echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
       
       - name: 编译生成APK文件
         run: |
-          cd myapp
-          cordova build android --release
+          cd platforms/android
+          ./gradlew assembleRelease  # 用Gradle原生命令编译，更稳定
       
-      - name: 保存生成的APP
+      - name: 保存APK供下载
         uses: actions/upload-artifact@v4
         with:
-          name: 我的安卓应用
-          path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          name: 我的安卓应用  # 下载时显示的文件名
+          path: platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk  # 实际APK路径
