@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='utf-8'?>
+<widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+    <name>YJSCSDH</name> <!-- APP的名称，会显示在手机上 -->
+    <description>一个可以自己修改网址的简单APP</description> <!-- 描述 -->
+    <author email="ppucco@foxmail.com（可选）" href="你的网站（可选）">PPUCCO</author>
+    <content src="index.html" /> <!-- 启动页面是www/index.html -->
+    <access origin="*" /> <!-- 允许访问所有网址 -->
+    <allow-intent href="http://*/*" />
+    <allow-intent href="https://*/*" />
+    <platform name="android">
+        <preference name="AndroidXEnabled" value="true" /> <!-- 适配新版安卓系统 -->
+        <preference name="LoadUrlTimeoutValue" value="60000" /> <!-- 网页加载超时时间（毫秒） -->
+    </platform>
+</widget>
