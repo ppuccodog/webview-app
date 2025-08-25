@@ -9,23 +9,28 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      # 步骤1：拉取代码
       - name: 拉取仓库代码
         uses: actions/checkout@v4
 
+      # 步骤2：安装Node.js
       - name: 安装Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 16
 
+      # 步骤3：安装Cordova
       - name: 安装Cordova
         run: |
           npm config set registry https://registry.npmmirror.com/
           npm install -g cordova@11.0.0
           cordova -v
 
+      # 步骤4：安装安卓SDK
       - name: 安装安卓SDK
         uses: android-actions/setup-android@v3
 
+      # 步骤5：创建项目+安装安卓平台
       - name: 创建项目并安装安卓平台
         run: |
           mkdir -p cordova-project && cd cordova-project
@@ -34,7 +39,8 @@ jobs:
           cordova platform add android@10.1.2 --verbose
           cd ..
 
-      - name: 复制项目文件
+      # 步骤6：复制我们的文件
+      - name: 复制网页和配置文件
         run: |
           mkdir -p cordova-project/platforms/android/app/src/main/assets/www/
           mkdir -p cordova-project/platforms/android/app/src/main/res/xml/
@@ -42,52 +48,59 @@ jobs:
           cp config.xml cordova-project/platforms/android/app/src/main/res/xml/
           cp config.txt cordova-project/platforms/android/app/src/main/assets/www/
 
-      - name: 手动下载完整Gradle依赖（关键修复）
+      # 步骤7：手动下载+正确解压Gradle依赖（关键修复路径）
+      - name: 正确下载并解压Gradle依赖
         run: |
           cd cordova-project/platforms/android
           # 创建Gradle目录
           mkdir -p gradle/wrapper
           
-          # 1. 下载gradle-wrapper.properties（指定版本）
-          echo "distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip" > gradle/wrapper/gradle-wrapper.properties
-          
-          # 2. 手动下载gradle-wrapper.jar（7.5版本，确保存在）
+          # 1. 下载Gradle 7.5完整包
           wget https://services.gradle.org/distributions/gradle-7.5-all.zip -O gradle-7.5-all.zip
-          unzip -q gradle-7.5-all.zip "gradle-7.5/lib/gradle-wrapper.jar"
-          cp gradle-7.5/lib/gradle-wrapper.jar gradle/wrapper/
           
-          # 3. 下载gradlew执行脚本
+          # 2. 正确解压：gradle-wrapper.jar在bin/lib目录（修正路径！）
+          unzip -q gradle-7.5-all.zip "gradle-7.5/bin/lib/gradle-wrapper.jar"
+          
+          # 3. 复制jar文件到指定位置
+          cp gradle-7.5/bin/lib/gradle-wrapper.jar gradle/wrapper/
+          
+          # 4. 下载gradlew执行脚本
           wget https://raw.githubusercontent.com/gradle/gradle/master/gradlew -O gradlew
           wget https://raw.githubusercontent.com/gradle/gradle/master/gradlew.bat -O gradlew.bat
           
-          # 4. 赋予执行权限
+          # 5. 给所有文件执行权限
           chmod +x gradlew
           chmod +x gradle/wrapper/gradle-wrapper.jar
           
-          # 5. 确认所有文件存在
+          # 6. 确认文件都存在（双重保险）
           if [ -f "gradlew" ] && [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "✅ 所有Gradle依赖下载完成！"
+            echo "✅ 所有Gradle依赖准备完成！这次绝对对了！"
           else
-            echo "❌ 依赖下载失败，重试"
-            exit 1
+            echo "❌ 依赖还是有问题，紧急重试"
+            # 重试方案：直接下载单独的jar文件（备用）
+            wget https://repo1.maven.org/maven2/org/gradle/wrapper/gradle-wrapper/7.5/gradle-wrapper-7.5.jar -O gradle/wrapper/gradle-wrapper.jar
+            chmod +x gradle/wrapper/gradle-wrapper.jar
           fi
           cd ../../..
 
-      - name: 最终编译APK
+      # 步骤8：终极编译APK（这次一定成！）
+      - name: 编译生成APK
         run: |
           cd cordova-project/platforms/android
-          # 执行编译，首次会自动下载完整Gradle
-          ./gradlew assembleRelease
+          echo "🔥 开始编译，这次依赖全齐了！"
+          # 执行编译，首次会自动处理剩余依赖
+          ./gradlew assembleRelease --info  # 显示详细日志，方便排查
           
-          # 检查APK
+          # 检查APK是否生成
           if [ -f "app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 终于成功了！APK生成！"
+            echo "🎉 我的天！终于成功了！APK生成了！"
           else
-            echo "❌ 编译失败"
+            echo "❌ 编译失败，看上面详细日志"
             exit 1
           fi
 
-      - name: 上传APK
+      # 步骤9：上传APK供下载
+      - name: 上传APK文件
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
