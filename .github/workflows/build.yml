@@ -1,4 +1,4 @@
-name: 构建安卓应用（项目内直接创建Activity，最终方案）
+name: 构建安卓应用（修复语法，项目内创Activity）
 on:
   workflow_dispatch:
 
@@ -19,7 +19,6 @@ jobs:
           npm config set registry https://registry.npmjs.org/
           npm cache clean --force
           npm install -g cordova@10.0.0 cordova-android@9.0.0
-          # 找到cordova-android根目录（用于复制其他模板）
           CORDOVA_ANDROID_ROOT=$(find /opt/hostedtoolcache/node -type d -name "cordova-android" -path "*/node_modules/cordova-android" | head -1)
           [ -d "$CORDOVA_ANDROID_ROOT" ] || { echo "❌ 没找到cordova-android根目录"; exit 1; }
           echo "CORDOVA_ANDROID_ROOT=$CORDOVA_ANDROID_ROOT" >> $GITHUB_ENV
@@ -50,7 +49,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（在项目内直接创建Activity）
+      - name: 构建项目（项目内直接创建Activity）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
@@ -61,18 +60,18 @@ jobs:
           mkdir -p "$PROJECT_PATH/www"
           sudo chmod -R 777 "$PROJECT_PATH"
           
-          # 1. 创建项目配置（包名必须与后续Activity一致）
+          # 1. 创建项目配置
           echo '{"name":"x-app","version":"1.0.0","cordova":{"platforms":["android"]}}' > "$PROJECT_PATH/package.json"
           echo '<?xml version="1.0"?><widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0"><name>YJSCSDH</name><content src="index.html"/></widget>' > "$PROJECT_PATH/config.xml"
           echo '<html><body>Hello</body></html>' > "$PROJECT_PATH/www/index.html"
           
           cd "$PROJECT_PATH"
           
-          # 2. 添加安卓平台（先创建基础工程结构）
+          # 2. 添加安卓平台
           cordova platform add android@9.0.0
           sleep 5
           
-          # 3. 补全模板资源（platform_www、strings.xml、AndroidManifest.xml）
+          # 3. 补全模板资源
           # 3.1 补platform_www
           ASSETS_WWW_PATH=$(find "$CORDOVA_ANDROID_ROOT" -type d -name "www" -path "*/templates/project/assets/www" | head -1)
           TARGET_PLATFORM_WWW="$PROJECT_PATH/platforms/android/platform_www"
@@ -88,11 +87,9 @@ jobs:
           TARGET_MANIFEST_DIR="$PROJECT_PATH/platforms/android/app/src/main"
           cp "$MANIFEST_XML_PATH" "$TARGET_MANIFEST_DIR/AndroidManifest.xml"
           
-          # 4. 关键：在项目源码目录直接创建MainActivity.java（确保Gradle能找到）
-          # 包名路径：com/my/simpleapp（与config.xml的id一致）
+          # 4. 关键：创建MainActivity.java（修复YAML语法，EOF单独成行）
           ACTIVITY_DIR="$PROJECT_PATH/platforms/android/app/src/main/java/com/my/simpleapp"
           mkdir -p "$ACTIVITY_DIR"
-          # 写入标准CordovaActivity子类代码
           cat > "$ACTIVITY_DIR/MainActivity.java" << EOF
 package com.my.simpleapp;
 
@@ -103,14 +100,11 @@ public class MainActivity extends CordovaActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // 加载config.xml中指定的index.html
         loadUrl(launchUrl);
     }
 }
 EOF
-          echo "✅ 已在项目源码目录创建MainActivity.java：$ACTIVITY_DIR/MainActivity.java"
-          # 验证文件内容
-          cat "$ACTIVITY_DIR/MainActivity.java"
+          echo "✅ 已创建MainActivity.java：$ACTIVITY_DIR/MainActivity.java"
           
           # 5. 补全Cordova核心配置
           API_JS_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "Api.js" -path "*/cordova/Api.js" | head -1)
@@ -120,13 +114,13 @@ EOF
           cp "$API_JS_PATH" "$CORDOVA_DIR/Api.js"
           cp "$DEFAULTS_XML_PATH" "$CORDOVA_DIR/defaults.xml"
           
-          # 6. 强制配置Gradle（禁用AndroidX）
+          # 6. 配置Gradle
           ANDROID_APP_PATH="$PROJECT_PATH/platforms/android/app"
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
           
-          # 7. 编译APK（此时Activity文件在项目内，Gradle必能识别）
+          # 7. 编译APK
           echo "🔨 开始编译APK"
           cordova build android --release
           
