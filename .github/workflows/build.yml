@@ -1,4 +1,4 @@
-name: 构建安卓应用（绝对路径终极版）
+name: 构建安卓应用（终极简化版）
 on:
   workflow_dispatch:
 
@@ -14,19 +14,12 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局安装依赖+验证路径
+      - name: 全局安装Cordova（不提前检查依赖）
         run: |
           npm config set registry https://registry.npmjs.org/
+          # 直接安装Cordova，cordova-android会在add平台时自动下载
           npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
-          # 验证cordova-android包的绝对路径（确保存在）
-          CORDOVA_ANDROID_PATH="/opt/hostedtoolcache/node/14.21.3/x64/lib/node_modules/cordova-android"
-          if [ -d "$CORDOVA_ANDROID_PATH" ]; then
-            echo "✅ cordova-android包存在：$CORDOVA_ANDROID_PATH"
-          else
-            echo "❌ cordova-android包缺失"
-            exit 1
-          fi
-          echo "CORDOVA_ANDROID_PATH=$CORDOVA_ANDROID_PATH" >> $GITHUB_ENV
+          cordova -v  # 仅验证Cordova命令可用
 
       - name: 安装JDK 8和11
         run: |
@@ -35,87 +28,79 @@ jobs:
           echo "JDK8_PATH=/usr/lib/jvm/java-8-openjdk-amd64" >> $GITHUB_ENV
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
 
-      - name: 用JDK 11安装安卓SDK（绝对路径）
+      - name: 用JDK 11安装安卓SDK
         run: |
           export JAVA_HOME=$JDK11_PATH
           export PATH=$JAVA_HOME/bin:$PATH
-          # 明确SDK绝对路径
-          ANDROID_SDK_ABS_PATH="$HOME/android-sdk"
-          mkdir -p $ANDROID_SDK_ABS_PATH
+          ANDROID_SDK_PATH="$HOME/android-sdk"
+          mkdir -p $ANDROID_SDK_PATH
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
-          unzip -q sdk-tools.zip -d $ANDROID_SDK_ABS_PATH/cmdline-tools
-          SDK_MANAGER="$ANDROID_SDK_ABS_PATH/cmdline-tools/cmdline-tools/bin/sdkmanager"
+          unzip -q sdk-tools.zip -d $ANDROID_SDK_PATH/cmdline-tools
+          SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/cmdline-tools/bin/sdkmanager"
           echo "y" | $SDK_MANAGER --licenses
           $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
-          echo "ANDROID_SDK_ABS_PATH=$ANDROID_SDK_ABS_PATH" >> $GITHUB_ENV
+          echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-      - name: 安装Gradle 6.9（绝对路径）
+      - name: 安装Gradle 6.9
         run: |
-          GRADLE_ABS_PATH="$HOME/gradle-6.9"
+          GRADLE_PATH="$HOME/gradle-6.9"
           wget https://services.gradle.org/distributions/gradle-6.9-bin.zip -O gradle-6.9-bin.zip
           unzip -q gradle-6.9-bin.zip -d $HOME
-          echo "GRADLE_ABS_PATH=$GRADLE_ABS_PATH" >> $GITHUB_ENV
-          echo "$GRADLE_ABS_PATH/bin" >> $GITHUB_PATH
+          echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
+          echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 用绝对路径创建项目+编译（核心修复）
+      - name: 绝对路径创建项目+编译（核心步骤）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
+          export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
+          export GRADLE_HOME=$GRADLE_PATH
           
-          # 1. 明确项目绝对路径（不再依赖cd）
-          PROJECT_ABS_PATH="$HOME/work/webview-app/webview-app/myapp"
-          echo "✅ 项目绝对路径：$PROJECT_ABS_PATH"
+          # 1. 项目绝对路径（GitHub Actions标准工作目录）
+          PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
+          echo "项目路径：$PROJECT_PATH"
           
-          # 2. 创建项目（指定绝对路径）
-          cordova create "$PROJECT_ABS_PATH" com.my.simpleapp "我的网页APP"
+          # 2. 创建项目
+          cordova create "$PROJECT_PATH" com.my.simpleapp "我的网页APP"
           
-          # 3. 强制生成config.xml（确保项目结构完整）
+          # 3. 生成config.xml（禁用AndroidX，避免警告）
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
             <content src="index.html" />
             <access origin="*" />
             <preference name="AndroidXEnabled" value="false" />
-          </widget>' > "$PROJECT_ABS_PATH/config.xml"
+          </widget>' > "$PROJECT_PATH/config.xml"
           
-          # 4. 绝对路径删除旧platforms（确保干净）
-          PLATFORMS_ABS_PATH="$PROJECT_ABS_PATH/platforms"
-          [ -d "$PLATFORMS_ABS_PATH" ] && rm -rf "$PLATFORMS_ABS_PATH"
+          # 4. 绝对路径添加安卓平台（Cordova会自动下载cordova-android）
+          cordova platform add android@9.0.0 --project "$PROJECT_PATH"
           
-          # 5. 绝对路径添加平台（--project参数强制指定项目路径）
-          cordova platform add android@9.0.0 \
-            --project "$PROJECT_ABS_PATH" \
-            --searchpath "$CORDOVA_ANDROID_PATH"
-          
-          # 6. 等待2秒+绝对路径验证（此时platforms必然在项目内）
+          # 5. 等待2秒，确保平台文件生成
           sleep 2
-          ANDROID_PLATFORM_ABS_PATH="$PLATFORMS_ABS_PATH/android"
-          if [ -f "$ANDROID_PLATFORM_ABS_PATH/build.gradle" ]; then
-            echo "✅ 平台目录生成成功！路径：$ANDROID_PLATFORM_ABS_PATH"
-            ls -l "$ANDROID_PLATFORM_ABS_PATH"  # 确认文件存在
-          else
-            echo "❌ 平台目录缺失，列出上级目录内容排查："
-            ls -l "$PROJECT_ABS_PATH"
+          ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
+          if [ ! -d "$ANDROID_PLATFORM_PATH" ]; then
+            echo "平台目录缺失，列出项目内容："
+            ls -l "$PROJECT_PATH"
             exit 1
           fi
           
-          # 7. 绝对路径复制网页文件
-          cp -rf "$HOME/work/webview-app/webview-app/www/"* "$PROJECT_ABS_PATH/www/"
-          cp "$HOME/work/webview-app/webview-app/config.txt" "$PROJECT_ABS_PATH/www/"
+          # 6. 复制网页文件
+          cp -rf "/home/runner/work/webview-app/webview-app/www/"* "$PROJECT_PATH/www/"
+          cp "/home/runner/work/webview-app/webview-app/config.txt" "$PROJECT_PATH/www/"
           
-          # 8. 绝对路径修改Gradle配置
-          sed -i '/jcenter.bintray.com/a \        maven { url "https://maven.google.com" }\n        maven { url "https://dl.google.com/maven/repo/" }' "$ANDROID_PLATFORM_ABS_PATH/build.gradle"
-          echo "org.gradle.java.home=$JDK8_PATH" > "$ANDROID_PLATFORM_ABS_PATH/gradle.properties"
+          # 7. 修复Gradle配置（添加Google仓库）
+          sed -i '/jcenter.bintray.com/a \        maven { url "https://maven.google.com" }\n        maven { url "https://dl.google.com/maven/repo/" }' "$ANDROID_PLATFORM_PATH/build.gradle"
+          echo "org.gradle.java.home=$JDK8_PATH" > "$ANDROID_PLATFORM_PATH/gradle.properties"
           
-          # 9. 绝对路径编译APK
-          cd "$PROJECT_ABS_PATH"  # 最后一次cd，确保Gradle在项目内执行
+          # 8. 编译APK
+          cd "$PROJECT_PATH"
           cordova build android --release
           
-          # 10. 绝对路径检查结果
-          APK_ABS_PATH="$ANDROID_PLATFORM_ABS_PATH/app/build/outputs/apk/release/app-release-unsigned.apk"
-          if [ -f "$APK_ABS_PATH" ]; then
-            echo "🎉 成功！APK路径：$APK_ABS_PATH"
-            cp "$APK_ABS_PATH" "$HOME/work/webview-app/webview-app/my-final-apk.apk"  # 复制到易上传路径
+          # 9. 检查并复制APK
+          APK_PATH="$ANDROID_PLATFORM_PATH/app/build/outputs/apk/release/app-release-unsigned.apk"
+          if [ -f "$APK_PATH" ]; then
+            echo "🎉 APK生成成功！路径：$APK_PATH"
+            cp "$APK_PATH" "/home/runner/work/webview-app/webview-app/final-app.apk"
           else
             exit 1
           fi
@@ -124,5 +109,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: 我的安卓应用
-          path: /home/runner/work/webview-app/webview-app/my-final-apk.apk
+          path: /home/runner/work/webview-app/webview-app/final-app.apk
           retention-days: 30
