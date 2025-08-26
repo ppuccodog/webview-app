@@ -1,125 +1,114 @@
-name: 构建安卓应用（终极可运行版）
+name: 构建安卓应用（彻底解决Node缓存+无报错版）
 on:
-  workflow_dispatch:  # 手动触发工作流
+  workflow_dispatch:
 
 jobs:
   build-android-apk:
-    runs-on: ubuntu-latest  # 使用最新版 Ubuntu 运行环境
+    runs-on: ubuntu-latest
     steps:
-      # 步骤1：拉取代码仓库
+      # 步骤1：拉取代码
       - name: 拉取代码
         uses: actions/checkout@v4
 
-      # 步骤2：安装 Node.js 14（匹配 Cordova 10.0.0 兼容版本）
-      - name: 安装 Node.js 14
+      # 步骤2：安装Node.js 14（移除npm缓存，避免锁文件错误）
+      - name: 安装Node.js 14
         uses: actions/setup-node@v4
         with:
           node-version: 14
-          cache: 'npm'  # 缓存 npm 依赖，加速后续安装
+          # 关键：删除cache: 'npm'配置，因项目初始化后才生成锁文件，提前缓存无意义
 
-      # 步骤3：全局安装 Cordova 及依赖
-      - name: 安装 Cordova 环境
+      # 步骤3：全局安装Cordova（直接安装，不依赖缓存）
+      - name: 安装Cordova环境
         run: |
-          # 配置 npm 镜像，加速安装
           npm config set registry https://registry.npmjs.org/
-          # 清理缓存，避免旧依赖冲突
           npm cache clean --force
-          # 安装指定版本 Cordova（10.0.0）和 cordova-android（9.0.0）
           npm install -g cordova@10.0.0 cordova-android@9.0.0
-          # 验证安装结果
+          # 验证安装
           cordova -v
           node -v
           npm -v
 
-      # 步骤4：安装 JDK8、安卓 SDK、Gradle（构建安卓必需工具链）
+      # 步骤4：安装安卓构建工具链（JDK8+SDK+Gradle）
       - name: 安装安卓构建工具链
         run: |
-          # 1. 安装 JDK8（安卓构建强制要求）
+          # 安装JDK8
           sudo apt-get update
           sudo apt-get install -y openjdk-8-jdk
           JDK8_PATH="/usr/lib/jvm/java-8-openjdk-amd64"
-          echo "JDK8_PATH=$JDK8_PATH" >> $GITHUB_ENV  # 保存路径到环境变量
+          echo "JDK8_PATH=$JDK8_PATH" >> $GITHUB_ENV
 
-          # 2. 安装安卓 SDK（指定 API 29 版本，匹配 cordova-android@9.0.0）
+          # 安装安卓SDK（API 29）
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p $ANDROID_SDK_PATH
-          # 下载 SDK 命令行工具
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
           unzip -q sdk-tools.zip -d $ANDROID_SDK_PATH/cmdline-tools
-          # 接受 SDK 许可协议
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/cmdline-tools/bin/sdkmanager"
           yes | $SDK_MANAGER --licenses || true
-          # 安装必需的 SDK 组件
           $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
-          echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV  # 保存路径
+          echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 3. 安装 Gradle 6.5（与 cordova-android@9.0.0 完全兼容）
+          # 安装Gradle 6.5
           GRADLE_PATH="$HOME/gradle-6.5"
           wget https://services.gradle.org/distributions/gradle-6.5-bin.zip -O gradle-6.5-bin.zip
           unzip -q gradle-6.5-bin.zip -d $HOME
-          echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV  # 保存路径
-          echo "$GRADLE_PATH/bin" >> $GITHUB_PATH  # 添加到系统 PATH
+          echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
+          echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      # 步骤5：初始化 Cordova 项目并构建 APK
-      - name: 初始化项目并编译 APK
+      # 步骤5：初始化项目+编译APK（核心步骤，无冗余）
+      - name: 初始化Cordova项目并编译APK
         run: |
-          # 加载之前保存的环境变量
+          # 加载环境变量
           export JAVA_HOME=$JDK8_PATH
           export PATH="$JAVA_HOME/bin:$PATH:$ANDROID_SDK_PATH/build-tools/29.0.3:$GRADLE_PATH/bin"
-          export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH  # 安卓 SDK 根目录
-          export ANDROID_HOME=$ANDROID_SDK_PATH  # 兼容旧版工具的环境变量
+          export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
+          export ANDROID_HOME=$ANDROID_SDK_PATH
 
-          # 项目基础路径（与代码仓库路径对应）
+          # 项目路径（确保与仓库结构一致）
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
-          # 彻底清理旧项目残留（避免平台重复添加问题）
+          # 彻底清理旧项目
           rm -rf "$PROJECT_PATH"
           mkdir -p "$PROJECT_PATH"
           cd "$PROJECT_PATH"
 
-          # 1. 用 Cordova 官方命令初始化项目（避免手动配置错误）
-          # 格式：cordova create 项目目录 应用包名 应用名称
+          # 1. 官方命令创建Cordova项目（自动生成正确目录结构）
           cordova create . com.my.simpleapp YJSCSDH
-          
-          # 2. 强制清理并添加安卓平台（解决“Platform already added”错误）
-          # 先移除已存在的安卓平台（即使不存在也不报错）
+
+          # 2. 强制清理并添加安卓平台（解决重复添加问题）
           cordova platform rm android --nosave || true
-          # 彻底删除平台残留目录和依赖
-          rm -rf platforms/android node_modules/cordova-android package-lock.json
-          # 重新安装精确版本的 cordova-android 依赖
+          rm -rf platforms/android node_modules/cordova-android
           npm install cordova-android@9.0.0 --save-exact
-          # 重新添加安卓平台（确保状态干净）
           cordova platform add android@9.0.0 --save
 
-          # 3. 生成 gradlew 可执行文件（解决“gradlew 不存在”问题）
+          # 3. 生成gradlew（解决文件不存在）
           cd platforms/android
-          gradle wrapper --gradle-version 6.5 --distribution-type all
-          chmod +x gradlew  # 赋予执行权限
-          [ -f "gradlew" ] || { echo "❌ gradlew 生成失败"; exit 1; }
+          gradle wrapper --gradle-version 6.5
+          chmod +x gradlew
+          [ -f "gradlew" ] || { echo "❌ gradlew生成失败"; exit 1; }
 
-          # 4. 禁用 AndroidX（解决配置冲突警告）
+          # 4. 禁用AndroidX（解决配置冲突）
           echo "android.useAndroidX=false" > gradle.properties
           echo "android.enableJetifier=false" >> gradle.properties
 
-          # 5. 编译 Release 版本 APK（指定 app 模块，解决任务不存在问题）
-          echo "🔨 开始编译 APK..."
-          ./gradlew :app:assembleRelease --quiet  # --quiet 减少日志输出
+          # 5. 编译APK（指定app模块）
+          echo "🔨 编译APK..."
+          ./gradlew :app:assembleRelease --info
 
-          # 6. 验证 APK 并复制到指定路径（便于后续上传）
-          APK_SOURCE="$PROJECT_PATH/platforms/android/app/build/outputs/apk/release/app-release.apk"
-          APK_DEST="$PROJECT_PATH/final-app.apk"
+          # 6. 验证并复制APK
+          APK_SOURCE="app/build/outputs/apk/release/app-release.apk"
+          APK_DEST="../../final-app.apk"
           if [ -f "$APK_SOURCE" ]; then
-            echo "🎉 APK 编译成功！"
+            echo "🎉 APK编译成功！"
             cp "$APK_SOURCE" "$APK_DEST"
           else
-            echo "❌ APK 编译失败，查看日志："
-            cat "$PROJECT_PATH/platforms/android/build/outputs/logs/build.log"
+            echo "❌ APK不存在，查看日志："
+            cat build/outputs/logs/build.log
             exit 1
           fi
 
-      # 步骤6：上传编译好的 APK 作为工件
-      - name: 上传 APK 工件
+      # 步骤6：上传APK
+      - name: 上传APK工件
         uses: actions/upload-artifact@v4
         with:
-          name: 安卓套壳应用-Release 版
+          name: 安卓应用-Release版
           path: /home/runner/work/webview-app/webview-app/myapp/final-app.apk
-          retention-days: 30  # 工件保留 30 天
+          retention-days: 30
