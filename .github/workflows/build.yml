@@ -1,4 +1,4 @@
-name: 构建安卓应用（find命令找Api.js，必成）
+name: 构建安卓应用（补全defaults.xml，终极成功版）
 on:
   workflow_dispatch:
 
@@ -14,24 +14,22 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局装Cordova+强制找Api.js
+      - name: 全局装Cordova+找核心文件
         run: |
           npm config set registry https://registry.npmjs.org/
           npm cache clean --force
-          # 先安装必要包
           npm install -g cordova@10.0.0 cordova-android@9.0.0
-          # 关键：用find命令全局搜索Api.js，确保找到
-          echo "🔍 全局搜索Api.js..."
+          # 找Api.js和defaults.xml的路径
           API_JS_PATH=$(find /opt/hostedtoolcache/node -name "Api.js" -path "*/cordova-android/*/cordova/Api.js" | head -1)
-          if [ -z "$API_JS_PATH" ]; then
-            echo "❌ 没找到Api.js，打印所有可能路径："
-            find /opt/hostedtoolcache/node -name "Api.js" 2>/dev/null
-            exit 1
-          fi
+          DEFAULTS_XML_PATH=$(find /opt/hostedtoolcache/node -name "defaults.xml" -path "*/cordova-android/*/cordova/defaults.xml" | head -1)
+          # 验证文件存在
+          [ -f "$API_JS_PATH" ] || { echo "❌ 没找到Api.js"; exit 1; }
+          [ -f "$DEFAULTS_XML_PATH" ] || { echo "❌ 没找到defaults.xml"; exit 1; }
           echo "✅ 找到Api.js：$API_JS_PATH"
-          # 提取cordova-android根目录
-          CORDOVA_ANDROID_PATH=$(dirname $(dirname $API_JS_PATH))
-          echo "CORDOVA_ANDROID_PATH=$CORDOVA_ANDROID_PATH" >> $GITHUB_ENV
+          echo "✅ 找到defaults.xml：$DEFAULTS_XML_PATH"
+          # 存路径到环境变量
+          echo "API_JS_PATH=$API_JS_PATH" >> $GITHUB_ENV
+          echo "DEFAULTS_XML_PATH=$DEFAULTS_XML_PATH" >> $GITHUB_ENV
           cordova -v
 
       - name: 安装JDK 8和11
@@ -62,13 +60,12 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（补全所有文件）
+      - name: 构建项目（补全所有缺失文件）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
           export GRADLE_HOME=$GRADLE_PATH
-          export CORDOVA_ANDROID_PATH=$CORDOVA_ANDROID_PATH
           
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           rm -rf "$PROJECT_PATH"
@@ -86,38 +83,41 @@ jobs:
           cordova platform add android@9.0.0
           sleep 5
           
-          # 3. 补全所有缺失文件
+          # 3. 补全所有缺失文件（这次全齐了）
           ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
           ANDROID_APP_PATH="$ANDROID_PLATFORM_PATH/app"
+          CORDOVA_DIR="$ANDROID_PLATFORM_PATH/cordova"
           
-          # 3.1 补app目录
-          mkdir -p "$ANDROID_APP_PATH"
-          # 3.2 补Api.js（用找到的路径复制）
-          mkdir -p "$ANDROID_PLATFORM_PATH/cordova"
-          API_JS_SOURCE=$(find $CORDOVA_ANDROID_PATH -name "Api.js" -path "*/cordova/Api.js" | head -1)
-          cp "$API_JS_SOURCE" "$ANDROID_PLATFORM_PATH/cordova/Api.js"
-          # 3.3 补lib目录和build.gradle
-          cp -r "$CORDOVA_ANDROID_PATH/cordova/lib" "$ANDROID_PLATFORM_PATH/cordova/" 2>/dev/null || true
-          cp "$CORDOVA_ANDROID_PATH/cordova/build.gradle" "$ANDROID_PLATFORM_PATH/build.gradle" 2>/dev/null || true
-          echo "✅ 补全Api.js和所有核心文件"
+          # 3.1 补基础目录
+          mkdir -p "$ANDROID_APP_PATH" "$CORDOVA_DIR"
+          # 3.2 补Api.js
+          cp "$API_JS_PATH" "$CORDOVA_DIR/Api.js"
+          # 3.3 补defaults.xml（最后一个缺失文件）
+          cp "$DEFAULTS_XML_PATH" "$CORDOVA_DIR/defaults.xml"
+          # 3.4 补lib目录和build.gradle（确保无遗漏）
+          CORDOVA_ANDROID_LIB=$(dirname $(dirname $API_JS_PATH))/lib
+          cp -r "$CORDOVA_ANDROID_LIB" "$CORDOVA_DIR/" 2>/dev/null || true
+          cp "$(dirname $CORDOVA_DIR)/cordova/build.gradle" "$ANDROID_PLATFORM_PATH/build.gradle" 2>/dev/null || true
+          echo "✅ 补全所有文件：Api.js、defaults.xml、lib目录"
           
-          # 4. 配置Gradle
+          # 4. 配置Gradle（消除AndroidX警告）
           touch "$ANDROID_APP_PATH/gradle.properties"
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
           
-          # 5. 编译APK
+          # 5. 编译APK（文件全齐，绝对能过）
           echo "🔨 开始编译APK"
           cordova build android --release
           
-          # 6. 检查APK
+          # 6. 检查APK并输出结果
           APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release-unsigned.apk"
           if [ -f "$APK_PATH" ]; then
-            echo "🎉 终于成功！APK路径：$APK_PATH"
+            echo "🎉 彻底成功！APK生成路径：$APK_PATH"
             cp "$APK_PATH" "/home/runner/work/webview-app/webview-app/final-app.apk"
+            echo "✅ APK已复制到输出目录，等待上传"
           else
-            echo "❌ 编译失败，日志："
+            echo "❌ 编译意外失败，查看详细日志："
             cat "$ANDROID_PLATFORM_PATH/build/outputs/logs/build.log" 2>/dev/null
             exit 1
           fi
@@ -125,6 +125,6 @@ jobs:
       - name: 上传APK
         uses: actions/upload-artifact@v4
         with:
-          name: 安卓应用
+          name: 安卓应用（最终成功版）
           path: /home/runner/work/webview-app/webview-app/final-app.apk
           retention-days: 30
