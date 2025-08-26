@@ -1,4 +1,4 @@
-name: 构建安卓应用（补MainActivity.java，最终成功）
+name: 构建安卓应用（项目内直接创建Activity，最终方案）
 on:
   workflow_dispatch:
 
@@ -14,32 +14,15 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局装Cordova+定位所有模板资源
+      - name: 全局装Cordova+定位基础资源
         run: |
           npm config set registry https://registry.npmjs.org/
           npm cache clean --force
           npm install -g cordova@10.0.0 cordova-android@9.0.0
-          # 1. 找到cordova-android根目录
+          # 找到cordova-android根目录（用于复制其他模板）
           CORDOVA_ANDROID_ROOT=$(find /opt/hostedtoolcache/node -type d -name "cordova-android" -path "*/node_modules/cordova-android" | head -1)
-          # 2. 找到所有必需模板文件
-          ASSETS_WWW_PATH=$(find "$CORDOVA_ANDROID_ROOT" -type d -name "www" -path "*/templates/project/assets/www" | head -1)
-          STRINGS_XML_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "strings.xml" -path "*/templates/project/res/values/strings.xml" | head -1)
-          MANIFEST_XML_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "AndroidManifest.xml" -path "*/templates/project/AndroidManifest.xml" | head -1)
-          # 3. 找到MainActivity.java模板（若没有则后续手动创建）
-          MAIN_ACTIVITY_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "MainActivity.java" -path "*/templates/project/src/*/*/*/MainActivity.java" | head -1)
-          
-          # 验证核心资源
           [ -d "$CORDOVA_ANDROID_ROOT" ] || { echo "❌ 没找到cordova-android根目录"; exit 1; }
-          [ -d "$ASSETS_WWW_PATH" ] || { echo "❌ 没找到assets/www"; exit 1; }
-          [ -f "$STRINGS_XML_PATH" ] || { echo "❌ 没找到strings.xml"; exit 1; }
-          [ -f "$MANIFEST_XML_PATH" ] || { echo "❌ 没找到AndroidManifest.xml"; exit 1; }
-          
-          echo "✅ 找到所有核心模板资源"
           echo "CORDOVA_ANDROID_ROOT=$CORDOVA_ANDROID_ROOT" >> $GITHUB_ENV
-          echo "ASSETS_WWW_PATH=$ASSETS_WWW_PATH" >> $GITHUB_ENV
-          echo "STRINGS_XML_PATH=$STRINGS_XML_PATH" >> $GITHUB_ENV
-          echo "MANIFEST_XML_PATH=$MANIFEST_XML_PATH" >> $GITHUB_ENV
-          echo "MAIN_ACTIVITY_PATH=$MAIN_ACTIVITY_PATH" >> $GITHUB_ENV
           cordova -v
 
       - name: 安装JDK 8
@@ -67,7 +50,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（补全MainActivity.java）
+      - name: 构建项目（在项目内直接创建Activity）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
@@ -78,80 +61,83 @@ jobs:
           mkdir -p "$PROJECT_PATH/www"
           sudo chmod -R 777 "$PROJECT_PATH"
           
-          # 1. 创建项目配置
+          # 1. 创建项目配置（包名必须与后续Activity一致）
           echo '{"name":"x-app","version":"1.0.0","cordova":{"platforms":["android"]}}' > "$PROJECT_PATH/package.json"
           echo '<?xml version="1.0"?><widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0"><name>YJSCSDH</name><content src="index.html"/></widget>' > "$PROJECT_PATH/config.xml"
           echo '<html><body>Hello</body></html>' > "$PROJECT_PATH/www/index.html"
           
           cd "$PROJECT_PATH"
           
-          # 2. 1. 手动创建所有缺失的模板路径（Cordova硬编码依赖）
-          # 2.1 补platform_www
-          TARGET_PLATFORM_WWW="$CORDOVA_ANDROID_ROOT/bin/templates/platform_www"
-          mkdir -p "$TARGET_PLATFORM_WWW"
-          cp -r "$ASSETS_WWW_PATH"/* "$TARGET_PLATFORM_WWW/"
-          # 2.2 补strings.xml
-          TARGET_STRINGS_DIR="$CORDOVA_ANDROID_ROOT/bin/templates/app/src/main/res/values"
-          mkdir -p "$TARGET_STRINGS_DIR"
-          cp "$STRINGS_XML_PATH" "$TARGET_STRINGS_DIR/strings.xml"
-          # 2.3 补AndroidManifest.xml
-          TARGET_MANIFEST_DIR="$CORDOVA_ANDROID_ROOT/bin/templates/app/src/main"
-          mkdir -p "$TARGET_MANIFEST_DIR"
-          cp "$MANIFEST_XML_PATH" "$TARGET_MANIFEST_DIR/AndroidManifest.xml"
-          # 2.4 关键：补MainActivity.java（继承CordovaActivity）
-          TARGET_ACTIVITY_DIR="$CORDOVA_ANDROID_ROOT/bin/templates/app/src/main/java/com/my/simpleapp"
-          mkdir -p "$TARGET_ACTIVITY_DIR"
-          # 若有模板则复制，没有则手动创建（确保包名匹配config.xml的com.my.simpleapp）
-          if [ -n "$MAIN_ACTIVITY_PATH" ] && [ -f "$MAIN_ACTIVITY_PATH" ]; then
-            cp "$MAIN_ACTIVITY_PATH" "$TARGET_ACTIVITY_DIR/MainActivity.java"
-          else
-            # 手动创建标准的CordovaActivity子类（包名必须匹配com.my.simpleapp）
-            echo "package com.my.simpleapp;" > "$TARGET_ACTIVITY_DIR/MainActivity.java"
-            echo "import org.apache.cordova.CordovaActivity;" >> "$TARGET_ACTIVITY_DIR/MainActivity.java"
-            echo "import android.os.Bundle;" >> "$TARGET_ACTIVITY_DIR/MainActivity.java"
-            echo "public class MainActivity extends CordovaActivity {" >> "$TARGET_ACTIVITY_DIR/MainActivity.java"
-            echo "    @Override" >> "$TARGET_ACTIVITY_DIR/MainActivity.java"
-            echo "    public void onCreate(Bundle savedInstanceState) {" >> "$TARGET_ACTIVITY_DIR/MainActivity.java"
-            echo "        super.onCreate(savedInstanceState);" >> "$TARGET_ACTIVITY_DIR/MainActivity.java"
-            echo "        loadUrl(launchUrl);" >> "$TARGET_ACTIVITY_DIR/MainActivity.java"
-            echo "    }" >> "$TARGET_ACTIVITY_DIR/MainActivity.java"
-            echo "}" >> "$TARGET_ACTIVITY_DIR/MainActivity.java"
-          fi
-          echo "✅ 已补全所有核心文件（含MainActivity.java）"
-          
-          # 3. 补Cordova核心配置（Api.js、defaults.xml）
-          API_JS_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "Api.js" -path "*/cordova/Api.js" | head -1)
-          DEFAULTS_XML_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "defaults.xml" -path "*/cordova/defaults.xml" | head -1)
-          
-          # 4. 添加安卓平台（此时模板文件已全）
+          # 2. 添加安卓平台（先创建基础工程结构）
           cordova platform add android@9.0.0
           sleep 5
           
-          # 5. 补项目内资源（确保工程完整性）
-          ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
-          ANDROID_APP_PATH="$ANDROID_PLATFORM_PATH/app"
-          CORDOVA_DIR="$ANDROID_PLATFORM_PATH/cordova"
-          mkdir -p "$ANDROID_APP_PATH" "$CORDOVA_DIR"
+          # 3. 补全模板资源（platform_www、strings.xml、AndroidManifest.xml）
+          # 3.1 补platform_www
+          ASSETS_WWW_PATH=$(find "$CORDOVA_ANDROID_ROOT" -type d -name "www" -path "*/templates/project/assets/www" | head -1)
+          TARGET_PLATFORM_WWW="$PROJECT_PATH/platforms/android/platform_www"
+          mkdir -p "$TARGET_PLATFORM_WWW"
+          cp -r "$ASSETS_WWW_PATH"/* "$TARGET_PLATFORM_WWW/"
+          # 3.2 补strings.xml
+          STRINGS_XML_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "strings.xml" -path "*/templates/project/res/values/strings.xml" | head -1)
+          TARGET_STRINGS_DIR="$PROJECT_PATH/platforms/android/app/src/main/res/values"
+          mkdir -p "$TARGET_STRINGS_DIR"
+          cp "$STRINGS_XML_PATH" "$TARGET_STRINGS_DIR/strings.xml"
+          # 3.3 补AndroidManifest.xml
+          MANIFEST_XML_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "AndroidManifest.xml" -path "*/templates/project/AndroidManifest.xml" | head -1)
+          TARGET_MANIFEST_DIR="$PROJECT_PATH/platforms/android/app/src/main"
+          cp "$MANIFEST_XML_PATH" "$TARGET_MANIFEST_DIR/AndroidManifest.xml"
+          
+          # 4. 关键：在项目源码目录直接创建MainActivity.java（确保Gradle能找到）
+          # 包名路径：com/my/simpleapp（与config.xml的id一致）
+          ACTIVITY_DIR="$PROJECT_PATH/platforms/android/app/src/main/java/com/my/simpleapp"
+          mkdir -p "$ACTIVITY_DIR"
+          # 写入标准CordovaActivity子类代码
+          cat > "$ACTIVITY_DIR/MainActivity.java" << EOF
+package com.my.simpleapp;
+
+import org.apache.cordova.CordovaActivity;
+import android.os.Bundle;
+
+public class MainActivity extends CordovaActivity {
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        // 加载config.xml中指定的index.html
+        loadUrl(launchUrl);
+    }
+}
+EOF
+          echo "✅ 已在项目源码目录创建MainActivity.java：$ACTIVITY_DIR/MainActivity.java"
+          # 验证文件内容
+          cat "$ACTIVITY_DIR/MainActivity.java"
+          
+          # 5. 补全Cordova核心配置
+          API_JS_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "Api.js" -path "*/cordova/Api.js" | head -1)
+          DEFAULTS_XML_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "defaults.xml" -path "*/cordova/defaults.xml" | head -1)
+          CORDOVA_DIR="$PROJECT_PATH/platforms/android/cordova"
+          mkdir -p "$CORDOVA_DIR"
           cp "$API_JS_PATH" "$CORDOVA_DIR/Api.js"
           cp "$DEFAULTS_XML_PATH" "$CORDOVA_DIR/defaults.xml"
           
-          # 6. 强制配置Gradle（禁用AndroidX，避免冲突）
+          # 6. 强制配置Gradle（禁用AndroidX）
+          ANDROID_APP_PATH="$PROJECT_PATH/platforms/android/app"
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
           
-          # 7. 编译APK（所有入口类和资源已齐全）
+          # 7. 编译APK（此时Activity文件在项目内，Gradle必能识别）
           echo "🔨 开始编译APK"
           cordova build android --release
           
-          # 8. 检查APK（成功标志）
+          # 8. 检查APK
           APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release-unsigned.apk"
           if [ -f "$APK_PATH" ]; then
-            echo "🎉 彻底成功！APK生成路径：$APK_PATH"
+            echo "🎉 彻底成功！APK路径：$APK_PATH"
             cp "$APK_PATH" "/home/runner/work/webview-app/webview-app/final-app.apk"
           else
             echo "❌ 编译失败，日志："
-            cat "$ANDROID_PLATFORM_PATH/build/outputs/logs/build.log" 2>/dev/null
+            cat "$PROJECT_PATH/platforms/android/build/outputs/logs/build.log" 2>/dev/null
             exit 1
           fi
 
