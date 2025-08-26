@@ -1,4 +1,4 @@
-name: 构建安卓应用（彻底解决Node缓存+无报错版）
+name: 构建安卓应用（目录验证版）
 on:
   workflow_dispatch:
 
@@ -6,29 +6,23 @@ jobs:
   build-android-apk:
     runs-on: ubuntu-latest
     steps:
-      # 步骤1：拉取代码
       - name: 拉取代码
         uses: actions/checkout@v4
 
-      # 步骤2：安装Node.js 14（移除npm缓存，避免锁文件错误）
       - name: 安装Node.js 14
         uses: actions/setup-node@v4
         with:
           node-version: 14
-          # 关键：删除cache: 'npm'配置，因项目初始化后才生成锁文件，提前缓存无意义
 
-      # 步骤3：全局安装Cordova（直接安装，不依赖缓存）
       - name: 安装Cordova环境
         run: |
           npm config set registry https://registry.npmjs.org/
           npm cache clean --force
           npm install -g cordova@10.0.0 cordova-android@9.0.0
-          # 验证安装
           cordova -v
           node -v
           npm -v
 
-      # 步骤4：安装安卓构建工具链（JDK8+SDK+Gradle）
       - name: 安装安卓构建工具链
         run: |
           # 安装JDK8
@@ -37,7 +31,7 @@ jobs:
           JDK8_PATH="/usr/lib/jvm/java-8-openjdk-amd64"
           echo "JDK8_PATH=$JDK8_PATH" >> $GITHUB_ENV
 
-          # 安装安卓SDK（API 29）
+          # 安装安卓SDK
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p $ANDROID_SDK_PATH
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
@@ -54,7 +48,6 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      # 步骤5：初始化项目+编译APK（核心步骤，无冗余）
       - name: 初始化Cordova项目并编译APK
         run: |
           # 加载环境变量
@@ -63,34 +56,56 @@ jobs:
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
           export ANDROID_HOME=$ANDROID_SDK_PATH
 
-          # 项目路径（确保与仓库结构一致）
+          # 项目路径
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
-          # 彻底清理旧项目
           rm -rf "$PROJECT_PATH"
           mkdir -p "$PROJECT_PATH"
-          cd "$PROJECT_PATH"
+          cd "$PROJECT_PATH" || exit 1
 
-          # 1. 官方命令创建Cordova项目（自动生成正确目录结构）
+          # 1. 创建Cordova项目
+          echo "创建Cordova项目..."
           cordova create . com.my.simpleapp YJSCSDH
+          ls -la  # 查看项目初始结构
 
-          # 2. 强制清理并添加安卓平台（解决重复添加问题）
+          # 2. 清理并添加安卓平台（分步执行+验证）
+          echo "移除旧平台（如有）..."
           cordova platform rm android --nosave || true
           rm -rf platforms/android node_modules/cordova-android
-          npm install cordova-android@9.0.0 --save-exact
-          cordova platform add android@9.0.0 --save
 
-          # 3. 生成gradlew（解决文件不存在）
-          cd platforms/android
+          echo "安装cordova-android依赖..."
+          npm install cordova-android@9.0.0 --save-exact
+          ls -la node_modules  # 验证依赖安装
+
+          echo "添加安卓平台..."
+          cordova platform add android@9.0.0 --save
+          
+          # 关键：验证平台目录是否存在
+          ANDROID_PLATFORM_DIR="$PROJECT_PATH/platforms/android"
+          if [ ! -d "$ANDROID_PLATFORM_DIR" ]; then
+            echo "❌ 安卓平台目录创建失败！当前平台目录结构："
+            ls -la platforms
+            exit 1
+          fi
+          echo "✅ 安卓平台目录已成功创建"
+
+          # 3. 生成gradlew
+          echo "进入安卓平台目录并生成gradlew..."
+          cd "$ANDROID_PLATFORM_DIR" || {
+            echo "❌ 无法进入安卓平台目录: $ANDROID_PLATFORM_DIR"
+            exit 1
+          }
           gradle wrapper --gradle-version 6.5
           chmod +x gradlew
           [ -f "gradlew" ] || { echo "❌ gradlew生成失败"; exit 1; }
 
-          # 4. 禁用AndroidX（解决配置冲突）
+          # 4. 禁用AndroidX
+          echo "配置gradle.properties禁用AndroidX..."
           echo "android.useAndroidX=false" > gradle.properties
           echo "android.enableJetifier=false" >> gradle.properties
+          cat gradle.properties  # 验证配置
 
-          # 5. 编译APK（指定app模块）
-          echo "🔨 编译APK..."
+          # 5. 编译APK
+          echo "开始编译APK..."
           ./gradlew :app:assembleRelease --info
 
           # 6. 验证并复制APK
@@ -105,7 +120,6 @@ jobs:
             exit 1
           fi
 
-      # 步骤6：上传APK
       - name: 上传APK工件
         uses: actions/upload-artifact@v4
         with:
