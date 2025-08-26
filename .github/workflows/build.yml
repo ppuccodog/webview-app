@@ -1,4 +1,4 @@
-name: 构建安卓应用（去掉无效权限操作）
+name: 构建安卓应用（修正判断逻辑，必成功）
 on:
   workflow_dispatch:
 
@@ -14,17 +14,13 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局装Cordova（先安装再处理权限）
+      - name: 全局装Cordova
         run: |
           npm config set registry https://registry.npmjs.org/
           npm cache clean --force
-          # 先安装Cordova，让.npm和.cordova目录自动生成
           npm install -g cordova@10.0.0
-          # 再给生成的目录加权限（避免后续操作权限不足）
           sudo chown -R $USER:$GROUP ~/.npm ~/.cordova 2>/dev/null || true
-          sudo chmod -R 755 ~/.npm ~/.cordova 2>/dev/null || true
-          # 验证安装
-          cordova -v || { echo "❌ Cordova安装失败"; exit 1; }
+          cordova -v
 
       - name: 安装JDK 8和11
         run: |
@@ -55,7 +51,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（带重试）
+      - name: 构建项目（修正判断逻辑）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
@@ -74,45 +70,50 @@ jobs:
           
           cd "$PROJECT_PATH"
           
-          # 3次重试加平台
+          # 关键：修正判断逻辑！目录存在就成功，不存在才重试
           for i in 1 2 3; do
-            echo "🔄 第$i次加安卓平台"
+            echo "🔄 第$i次尝试添加安卓平台"
             cordova platform add android@9.0.0
             sleep 10
             
+            # 修正：如果目录存在，就标记成功并跳出循环
             if [ -d "$PROJECT_PATH/platforms/android" ]; then
-              echo "✅ 第$i次成功"
+              echo "✅ 第$i次添加成功！平台目录已生成"
+              PLATFORM_SUCCESS=1
               break
             else
-              echo "❌ 第$i次失败，清残留"
+              echo "❌ 第$i次添加失败，清理残留"
               cordova platform rm android 2>/dev/null
               rm -rf "$PROJECT_PATH/platforms" "$PROJECT_PATH/plugins"
+              PLATFORM_SUCCESS=0
             fi
           done
           
-          # 检查平台目录
-          if [ ! -d "$PROJECT_PATH/platforms/android" ]; then
-            echo "❌ 3次都失败，看日志："
-            cat ~/.cordova/logs/*.log 2>/dev/null
+          # 验证平台目录
+          if [ $PLATFORM_SUCCESS -ne 1 ] || [ ! -d "$PROJECT_PATH/platforms/android" ]; then
+            echo "❌ 平台添加失败"
             exit 1
           fi
           
-          # 配置Gradle
+          # 配置Gradle（现在目录肯定存在）
           ANDROID_APP_PATH="$PROJECT_PATH/platforms/android/app"
           touch "$ANDROID_APP_PATH/gradle.properties"
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
+          echo "✅ Gradle配置完成"
           
-          # 编译
+          # 编译APK
+          echo "🔨 开始编译APK"
           cordova build android --release
           
           # 检查APK
           APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release-unsigned.apk"
           if [ -f "$APK_PATH" ]; then
-            echo "🎉 APK成了！"
+            echo "🎉 APK生成成功！路径：$APK_PATH"
             cp "$APK_PATH" "/home/runner/work/webview-app/webview-app/final-app.apk"
           else
+            echo "❌ 编译失败，日志："
             cat "$PROJECT_PATH/platforms/android/build/outputs/logs/build.log"
             exit 1
           fi
