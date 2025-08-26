@@ -1,4 +1,4 @@
-name: 构建安卓应用（Gradle插件修复版）
+name: 构建安卓应用（sdkmanager修复版）
 on:
   workflow_dispatch:
 
@@ -14,7 +14,7 @@ jobs:
         with:
           node-version: 14
 
-      - name: 安装安卓构建工具链（稳定镜像版）
+      - name: 安装安卓构建工具链（修复仓库配置）
         run: |
           export TIMEOUT=300
           
@@ -34,16 +34,37 @@ jobs:
           }
           unzip -q sdk-tools.zip -d $ANDROID_SDK_PATH/cmdline-tools
 
-          # 安装SDK组件
+          # 关键修复：通过环境变量配置仓库，替代--repository参数
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/cmdline-tools/bin/sdkmanager"
           chmod +x $SDK_MANAGER
+          
+          # 配置安卓仓库镜像（清华镜像）
+          echo "配置安卓仓库镜像..."
+          mkdir -p "$ANDROID_SDK_PATH/.android"
+          cat > "$ANDROID_SDK_PATH/.android/repositories.cfg" << EOF
+          ### 安卓SDK仓库配置（使用清华镜像）
+          [main]
+          disabledRepositories=
+          enabledRepositories=
+              https\://mirrors.tuna.tsinghua.edu.cn/android/repository/
+              https\://dl.google.com/android/repository/
+          EOF
+
+          # 安装SDK组件（移除--repository参数，改用配置文件）
+          echo "安装SDK组件..."
           $SDK_MANAGER --sdk_root=$ANDROID_SDK_PATH \
-            --repository=https://mirrors.tuna.tsinghua.edu.cn/android/repository/ \
             "platforms;android-29" "build-tools;29.0.3" "platform-tools" \
-            --verbose --no_https || exit 1
+            --verbose --no_https || {
+              echo "镜像安装失败，重试官方源"
+              # 移除镜像配置，使用官方源
+              rm -f "$ANDROID_SDK_PATH/.android/repositories.cfg"
+              $SDK_MANAGER --sdk_root=$ANDROID_SDK_PATH \
+                "platforms;android-29" "build-tools;29.0.3" "platform-tools" \
+                --verbose --no_https || exit 1
+            }
           echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 安装Gradle 7.0（与插件7.0.4匹配）
+          # 安装Gradle 7.0
           GRADLE_PATH="$HOME/gradle-7.0"
           GRADLE_URL="https://mirrors.huaweicloud.com/gradle/gradle-7.0-bin.zip"
           wget --timeout=$TIMEOUT --tries=3 --no-check-certificate $GRADLE_URL -O gradle-7.0-bin.zip || exit 1
@@ -51,7 +72,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 纯手动构建安卓项目（修复插件版本）
+      - name: 纯手动构建安卓项目
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH="$JAVA_HOME/bin:$PATH:$ANDROID_SDK_PATH/build-tools/29.0.3:$GRADLE_PATH/bin"
@@ -63,7 +84,7 @@ jobs:
           mkdir -p "$PROJECT_PATH"
           cd "$PROJECT_PATH" || exit 1
 
-          # 创建项目结构
+          # 创建项目结构（与之前版本相同）
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
@@ -76,7 +97,7 @@ jobs:
           # 编写网页测试页面
           echo '<!DOCTYPE html><html><body style="background:#fff;"><h1>测试成功！</h1></body></html>' > "$PROJECT_PATH/www/index.html"
 
-          # 编写CordovaLib核心代码
+          # 编写CordovaLib核心代码（与之前版本相同）
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/CordovaActivity.java" << EOF
           package org.apache.cordova;
           import android.app.Activity;
@@ -100,6 +121,7 @@ jobs:
           }
           EOF
 
+          # 项目配置文件（使用阿里云gradle插件仓库）
           # CordovaLib的build.gradle
           cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           apply plugin: 'com.android.library'
@@ -130,73 +152,16 @@ jobs:
           }
           EOF
 
-          # 编写app模块代码
-          cat > "$APP_DIR/src/main/java/com/my/simpleapp/MainActivity.java" << EOF
-          package com.my.simpleapp;
-          import org.apache.cordova.CordovaActivity;
-          import android.os.Bundle;
-
-          public class MainActivity extends CordovaActivity {
-              @Override
-              public void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-              }
-          }
-          EOF
-
-          # AndroidManifest.xml
-          cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-                    package="com.my.simpleapp"
-                    android:versionCode="1"
-                    android:versionName="1.0.0">
-
-              <uses-sdk
-                  android:minSdkVersion="21"
-                  android:targetSdkVersion="29" />
-
-              <uses-permission android:name="android.permission.INTERNET" />
-
-              <application
-                  android:allowBackup="true"
-                  android:label="@string/app_name"
-                  android:theme="@style/AppTheme">
-
-                  <activity
-                      android:name=".MainActivity"
-                      android:label="@string/app_name"
-                      android:configChanges="orientation|keyboardHidden|screenSize">
-
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF
-
-          # strings.xml
-          cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">YJSCSDH</string>
-          </resources>
-          EOF
-
-          # app模块的build.gradle（关键修复）
+          # app模块的build.gradle
           cat > "$APP_DIR/build.gradle" << EOF
           buildscript {
               repositories {
-                  // 增加Gradle插件专用仓库
                   maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
                   maven { url 'https://maven.aliyun.com/repository/google' }
                   maven { url 'https://maven.aliyun.com/repository/public' }
                   mavenCentral()
               }
               dependencies {
-                  // 使用最新可用的7.0.4版本
                   classpath 'com.android.tools.build:gradle:7.0.4'
               }
           }
@@ -246,13 +211,64 @@ jobs:
           }
           EOF
 
-          # 项目根目录配置
+          # 其他配置文件（与之前版本相同）
+          cat > "$APP_DIR/src/main/java/com/my/simpleapp/MainActivity.java" << EOF
+          package com.my.simpleapp;
+          import org.apache.cordova.CordovaActivity;
+          import android.os.Bundle;
+
+          public class MainActivity extends CordovaActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          EOF
+
+          cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+                    package="com.my.simpleapp"
+                    android:versionCode="1"
+                    android:versionName="1.0.0">
+
+              <uses-sdk
+                  android:minSdkVersion="21"
+                  android:targetSdkVersion="29" />
+
+              <uses-permission android:name="android.permission.INTERNET" />
+
+              <application
+                  android:allowBackup="true"
+                  android:label="@string/app_name"
+                  android:theme="@style/AppTheme">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:label="@string/app_name"
+                      android:configChanges="orientation|keyboardHidden|screenSize">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">YJSCSDH</string>
+          </resources>
+          EOF
+
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
           include ':app'
           include ':CordovaLib'
           EOF
 
-          # 根目录build.gradle
           cat > "$ANDROID_ROOT/build.gradle" << EOF
           buildscript {
               repositories {
@@ -279,7 +295,6 @@ jobs:
           }
           EOF
 
-          # gradle.properties
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
           android.useAndroidX=false
           android.enableJetifier=false
@@ -288,13 +303,12 @@ jobs:
           org.gradle.parallel=true
           EOF
 
-          # 生成gradlew
+          # 生成gradlew并编译
           cd "$ANDROID_ROOT" || exit 1
           gradle wrapper --gradle-version 7.0 --distribution-type all
           chmod +x gradlew
           [ -f "gradlew" ] || { echo "❌ gradlew生成失败"; exit 1; }
 
-          # 编译APK
           echo "🔨 开始编译APK..."
           ./gradlew :app:assembleRelease --info
 
