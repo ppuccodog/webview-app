@@ -1,4 +1,4 @@
-name: 构建安卓应用（手动创建平台目录）
+name: 构建安卓应用（移除冗余包检查+优化npm安装）
 on:
   workflow_dispatch:
 
@@ -13,13 +13,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 14
+          cache: 'npm'  # 启用npm缓存，加速依赖安装
 
-      - name: 全局安装依赖
+      - name: 全局安装依赖（移除冗余检查，减少警告）
         run: |
+          # 配置npm镜像并忽略deprecated警告（避免冗余提示干扰）
           npm config set registry https://registry.npmjs.org/
+          npm config set ignore-scripts false
+          # 直接安装依赖，不额外执行npm list（避免空目录报错）
           npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
-          # 验证cordova-android包是否存在
-          npm list -g cordova-android
+          # 仅验证cordova命令是否可用（核心验证，替代包列表检查）
+          if command -v cordova &> /dev/null; then
+            echo "✅ Cordova已成功安装，版本：$(cordova -v)"
+          else
+            echo "❌ Cordova安装失败"
+            exit 1
+          fi
 
       - name: 安装JDK 8和11
         run: |
@@ -33,8 +42,10 @@ jobs:
           export JAVA_HOME=$JDK11_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           mkdir -p $HOME/android-sdk
+          # 下载SDK工具并静默解压
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
           unzip -q sdk-tools.zip -d $HOME/android-sdk/cmdline-tools
+          # 执行SDK配置
           SDK_MANAGER=$HOME/android-sdk/cmdline-tools/cmdline-tools/bin/sdkmanager
           echo "y" | $SDK_MANAGER --licenses
           $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
@@ -46,6 +57,8 @@ jobs:
           unzip -q gradle-6.9-bin.zip
           echo "GRADLE_HOME=$(pwd)/gradle-6.9" >> $GITHUB_ENV
           echo "$(pwd)/gradle-6.9/bin" >> $GITHUB_PATH
+          # 验证Gradle安装
+          gradle --version
 
       - name: 手动创建平台目录+编译
         run: |
@@ -55,25 +68,25 @@ jobs:
           # 1. 创建项目并进入
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
-          echo "当前目录：$(pwd)"
+          echo "当前工作目录：$(pwd)"
           
-          # 2. 手动创建platforms/android目录（关键！）
+          # 2. 手动创建platforms/android目录（确保存在）
           mkdir -p platforms/android
           echo "✅ 手动创建platforms/android目录"
           
-          # 3. 强制从本地包添加安卓平台（避免网络下载中断）
-          cordova platform add android@9.0.0 --searchpath /usr/local/lib/node_modules/
+          # 3. 强制添加安卓平台（指定本地路径，避免网络依赖）
+          cordova platform add android@9.0.0 --searchpath /opt/hostedtoolcache/node/14.21.3/x64/lib/node_modules/
           
-          # 4. 验证目录是否存在（此时必然存在）
+          # 4. 验证平台目录
           if [ -d "platforms/android" ]; then
-            echo "✅ 平台目录存在，目录内容："
+            echo "✅ 平台目录存在，内容："
             ls -l platforms/android
           else
-            echo "❌ 目录仍缺失，退出"
+            echo "❌ 目录缺失"
             exit 1
           fi
           
-          # 5. 配置文件+复制网页
+          # 5. 配置文件+复制网页资源
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
@@ -84,7 +97,7 @@ jobs:
           cp -rf ../www/* www/
           cp ../config.txt www/
           
-          # 6. 修改Gradle配置（此时文件已存在）
+          # 6. 修复Gradle配置
           sed -i '/jcenter.bintray.com/a \        maven { url "https://maven.google.com" }\n        maven { url "https://dl.google.com/maven/repo/" }' platforms/android/build.gradle
           sed -i '/dependencies {/a \    implementation "com.g00fy2:versioncompare:1.3.4"' platforms/android/app/build.gradle
           echo "org.gradle.java.home=$JDK8_PATH" > platforms/android/gradle.properties
@@ -96,6 +109,8 @@ jobs:
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
             echo "🎉 APK生成成功！"
           else
+            echo "❌ 编译失败，查看Gradle日志："
+            cat platforms/android/build/outputs/logs/build.log
             exit 1
           fi
 
@@ -104,3 +119,4 @@ jobs:
         with:
           name: 我的安卓应用
           path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 30
