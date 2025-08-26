@@ -1,4 +1,4 @@
-name: 构建安卓应用（无EOF语法，终极版）
+name: 构建安卓应用（修复任务冲突，最终版）
 on:
   workflow_dispatch:
 
@@ -14,7 +14,7 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局装Cordova+补全模板文件
+      - name: 全局装Cordova+处理模板文件
         run: |
           npm config set registry https://registry.npmjs.org/
           npm cache clean --force
@@ -24,16 +24,13 @@ jobs:
           CORDOVA_ANDROID_ROOT=$(find /opt/hostedtoolcache/node -type d -name "cordova-android" -path "*/node_modules/cordova-android" | head -1)
           [ -d "$CORDOVA_ANDROID_ROOT" ] || { echo "❌ 没找到cordova-android根目录"; exit 1; }
           
-          # 关键修复：用echo -e写wrapper.gradle（无EOF，彻底规避YAML语法错）
+          # 关键修复：删除可能导致冲突的wrapper.gradle（让Cordova自动生成）
           WRAPPER_GRADLE_PATH="$CORDOVA_ANDROID_ROOT/bin/templates/wrapper.gradle"
-          echo "🔧 检查并创建wrapper.gradle"
-          if [ ! -f "$WRAPPER_GRADLE_PATH" ]; then
-            echo "创建缺失的wrapper.gradle"
-            mkdir -p "$(dirname "$WRAPPER_GRADLE_PATH")"
-            # 用\n换行，用\"转义引号，YAML解析无压力
-            echo -e "task wrapper(type: Wrapper) {\n    gradleVersion = '6.5'\n    distributionUrl = \"https://services.gradle.org/distributions/gradle-6.5-all.zip\"\n}" > "$WRAPPER_GRADLE_PATH"
+          echo "🔧 处理wrapper.gradle冲突"
+          if [ -f "$WRAPPER_GRADLE_PATH" ]; then
+            echo "删除可能导致冲突的wrapper.gradle"
+            rm "$WRAPPER_GRADLE_PATH"
           fi
-          [ -f "$WRAPPER_GRADLE_PATH" ] || { echo "❌ wrapper.gradle创建失败"; exit 1; }
           
           # 定位其他核心资源
           ASSETS_WWW_PATH=$(find "$CORDOVA_ANDROID_ROOT" -type d -name "www" -path "*/templates/project/assets/www" | head -1)
@@ -120,7 +117,7 @@ jobs:
           
           cd "$PROJECT_PATH"
           
-          # 3. 添加安卓平台
+          # 3. 添加安卓平台（让Cordova自动处理wrapper配置）
           cordova platform add android@9.0.0
           sleep 5
           
@@ -179,7 +176,7 @@ jobs:
           cp "$API_JS_PATH" "$CORDOVA_DIR/Api.js"
           cp "$DEFAULTS_XML_PATH" "$CORDOVA_DIR/defaults.xml"
           
-          # 12. 配置Gradle属性
+          # 12. 配置Gradle属性（强制关闭AndroidX）
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
