@@ -1,4 +1,4 @@
-name: 构建安卓应用（生成package.json解决包名冲突）
+name: 构建安卓应用（理顺目录顺序+最终版）
 on:
   workflow_dispatch:
 
@@ -49,25 +49,26 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 生成package.json+编译（彻底解决包名冲突）
+      - name: 先创目录+再生成文件（理顺顺序）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
           export GRADLE_HOME=$GRADLE_PATH
           
-          # 1. 项目路径（固定）
+          # 1. 项目路径+先手动创建目录（关键！避免文件写入时目录不存在）
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
-          echo "项目路径：$PROJECT_PATH"
+          mkdir -p "$PROJECT_PATH"  # 先创建目录，再写文件
+          echo "✅ 已创建项目目录：$PROJECT_PATH"
           
-          # 2. 关键：在项目根目录生成空package.json，明确项目名称（避免Cordova自动混淆）
+          # 2. 生成package.json（此时目录已存在，不会报错）
           echo '{"name": "my-webview-app", "version": "1.0.0", "private": true}' > "$PROJECT_PATH/package.json"
-          echo "✅ 生成package.json，项目名称：my-webview-app"
+          echo "✅ 生成package.json"
           
-          # 3. 创建Cordova项目（此时会读取package.json，不冲突）
+          # 3. 创建Cordova项目（--force覆盖，确保配置正确）
           cordova create "$PROJECT_PATH" com.example.myapp "我的网页APP" --force
           
-          # 4. 生成config.xml（匹配包名）
+          # 4. 覆盖config.xml（禁用AndroidX）
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.example.myapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
@@ -76,7 +77,7 @@ jobs:
             <preference name="AndroidXEnabled" value="false" />
           </widget>' > "$PROJECT_PATH/config.xml"
           
-          # 5. 添加安卓平台（此时无包名冲突）
+          # 5. 添加安卓平台
           cordova platform add android@9.0.0 --project "$PROJECT_PATH"
           
           # 6. 等待2秒+验证平台目录
@@ -90,7 +91,7 @@ jobs:
           
           # 7. 复制网页文件
           cp -rf "/home/runner/work/webview-app/webview-app/www/"* "$PROJECT_PATH/www/"
-          cp "/home/runner/work/webview-app/webview-app/config.txt" "$PROJECT_PATH/www/"
+          [ -f "/home/runner/work/webview-app/webview-app/config.txt" ] && cp "$_" "$PROJECT_PATH/www/"
           
           # 8. 修复Gradle配置
           sed -i '/jcenter.bintray.com/a \        maven { url "https://maven.google.com" }\n        maven { url "https://dl.google.com/maven/repo/" }' "$ANDROID_PLATFORM_PATH/build.gradle"
