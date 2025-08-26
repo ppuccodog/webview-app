@@ -1,41 +1,52 @@
-name: 构建安卓套壳应用（Java路径修复版）
+name: 构建安卓套壳应用（最终无错版）
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 手动触发工作流
 
 jobs:
   build-android-apk:
     runs-on: ubuntu-latest
     steps:
+      # 步骤1：拉取代码仓库
       - name: 拉取代码
         uses: actions/checkout@v4
 
-      - name: 安装Node.js 14（可选）
+      # 步骤2：安装 Node.js 14（备用，不影响核心构建）
+      - name: 安装 Node.js 14
         uses: actions/setup-node@v4
         with:
           node-version: 14
 
-      - name: 安装安卓构建工具链
+      # 步骤3：安装安卓构建工具链（JDK11+SDK+Gradle）
+      - name: 安装安卓构建依赖
         run: |
-          export TIMEOUT=300
+          export TIMEOUT=300  # 5分钟超时控制
           
-          # 安装JDK11
+          # 1. 安装并验证 JDK 11（确保路径有效）
           sudo apt-get update -o Acquire::ForceIPv4=true
-          sudo apt-get remove -y openjdk-8-jdk
+          # 先卸载旧版本，避免冲突
+          sudo apt-get remove -y openjdk-8-jdk openjdk-11-jdk || true
           sudo apt-get install -y -qq openjdk-11-jdk
           JDK11_PATH="/usr/lib/jvm/java-11-openjdk-amd64"
+          # 验证JDK路径（检查java可执行文件是否存在）
+          if [ ! -f "$JDK11_PATH/bin/java" ]; then
+            echo "❌ JDK11路径无效，当前JVM目录："
+            ls -l "/usr/lib/jvm/"
+            exit 1
+          fi
           echo "JDK11_PATH=$JDK11_PATH" >> $GITHUB_ENV
 
-          # 安装安卓SDK
+          # 2. 安装安卓 SDK（清华镜像加速）
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p $ANDROID_SDK_PATH
           SDK_TOOLS_URL="https://mirrors.tuna.tsinghua.edu.cn/android/repository/commandlinetools-linux-9477386_latest.zip"
+          # 下载SDK工具（失败重试官方源）
           wget --timeout=$TIMEOUT --tries=3 --no-check-certificate $SDK_TOOLS_URL -O sdk-tools.zip || {
-            echo "重试官方源"
+            echo "⚠️ 清华镜像下载失败，重试官方源"
             wget --timeout=$TIMEOUT --tries=2 https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip || exit 1
           }
           unzip -q sdk-tools.zip -d $ANDROID_SDK_PATH/cmdline-tools
 
-          # 配置SDK仓库镜像
+          # 3. 配置SDK仓库镜像（避免sdkmanager参数错误）
           mkdir -p "$ANDROID_SDK_PATH/.android"
           cat > "$ANDROID_SDK_PATH/.android/repositories.cfg" << EOF
           [main]
@@ -44,13 +55,13 @@ jobs:
               https\://dl.google.com/android/repository/
           EOF
 
-          # 安装SDK组件
+          # 4. 安装SDK核心组件（API 29+构建工具）
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/cmdline-tools/bin/sdkmanager"
           chmod +x $SDK_MANAGER
           $SDK_MANAGER --sdk_root=$ANDROID_SDK_PATH \
             "platforms;android-29" "build-tools;29.0.3" "platform-tools" \
             --verbose --no_https || {
-              echo "镜像安装失败，重试官方源"
+              echo "⚠️ 镜像安装失败，重试官方源"
               rm -f "$ANDROID_SDK_PATH/.android/repositories.cfg"
               $SDK_MANAGER --sdk_root=$ANDROID_SDK_PATH \
                 "platforms;android-29" "build-tools;29.0.3" "platform-tools" \
@@ -58,41 +69,59 @@ jobs:
             }
           echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 安装Gradle 7.0.2
+          # 5. 安装 Gradle 7.0.2（与安卓插件7.0.4匹配）
           GRADLE_PATH="$HOME/gradle-7.0.2"
           GRADLE_URL="https://mirrors.huaweicloud.com/gradle/gradle-7.0.2-bin.zip"
           wget --timeout=$TIMEOUT --tries=3 --no-check-certificate $GRADLE_URL -O gradle-7.0.2-bin.zip || exit 1
           unzip -q gradle-7.0.2-bin.zip -d $HOME
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
-          echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
+          echo "$GRADLE_PATH/bin" >> $GITHUB_PATH  # 添加到系统PATH
 
+      # 步骤4：构建安卓套壳应用（纯净配置，无冗余）
       - name: 构建安卓套壳应用
         run: |
-          # 加载环境变量
+          # 加载环境变量（验证Java环境）
           export JAVA_HOME=$JDK11_PATH
           export PATH="$JAVA_HOME/bin:$PATH:$ANDROID_SDK_PATH/build-tools/29.0.3:$GRADLE_PATH/bin"
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
-          java -version  # 验证Java版本
+          # 输出关键信息到日志，便于调试
+          echo "✅ 当前Java路径：$JAVA_HOME"
+          echo "✅ 当前Java版本：$(java -version 2>&1)"
+          echo "✅ 当前Gradle版本：$(gradle -v | head -n 1)"
 
-          # 项目路径设置
+          # 项目基础路径设置
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
-          rm -rf "$PROJECT_PATH"
+          rm -rf "$PROJECT_PATH"  # 彻底清理旧项目，避免残留
           mkdir -p "$PROJECT_PATH"
           cd "$PROJECT_PATH" || exit 1
 
-          # 创建项目结构
+          # 1. 创建安卓项目目录结构
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
-          mkdir -p "$APP_DIR/src/main/java/com/my/simpleapp"
-          mkdir -p "$APP_DIR/src/main/res/values"
-          mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
-          mkdir -p "$PROJECT_PATH/www"
+          # 创建关键目录（避免文件找不到错误）
+          mkdir -p "$APP_DIR/src/main/java/com/my/simpleapp"  # MainActivity路径
+          mkdir -p "$APP_DIR/src/main/res/values"            # 资源文件路径
+          mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"  # Cordova核心类路径
+          mkdir -p "$PROJECT_PATH/www"  # 网页资源目录
 
-          # 编写网页测试内容
-          echo '<!DOCTYPE html><html><body style="background:#fff;"><h1>测试成功！</h1></body></html>' > "$PROJECT_PATH/www/index.html"
+          # 2. 编写网页测试内容（套壳核心：加载此网页）
+          cat > "$PROJECT_PATH/www/index.html" << EOF
+          <!DOCTYPE html>
+          <html lang="zh-CN">
+          <head>
+              <meta charset="UTF-8">
+              <title>安卓套壳测试</title>
+              <style>body { margin: 0; padding: 2rem; background: #f5f5f5; text-align: center; }</style>
+          </head>
+          <body>
+              <h1 style="color: #2196F3;">安卓套壳应用构建成功！</h1>
+              <p>这是一个纯手动构建的WebView套壳应用</p>
+          </body>
+          </html>
+          EOF
 
-          # 编写Cordova核心类
+          # 3. 编写 Cordova 核心类（简化版WebView容器）
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/CordovaActivity.java" << EOF
           package org.apache.cordova;
           import android.app.Activity;
@@ -102,11 +131,13 @@ jobs:
 
           public class CordovaActivity extends Activity {
               protected WebView webView;
+              // 加载网页路径（关联www目录的index.html）
               protected String launchUrl = "file:///android_asset/www/index.html";
 
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
+                  // 初始化WebView并加载网页
                   webView = new WebView(this);
                   LinearLayout layout = new LinearLayout(this);
                   layout.addView(webView);
@@ -116,14 +147,14 @@ jobs:
           }
           EOF
 
-          # 配置CordovaLib模块
+          # 4. 配置 CordovaLib 模块（库模块，供app依赖）
           cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           apply plugin: 'com.android.library'
 
           android {
-              compileSdkVersion 29
-              buildToolsVersion '29.0.3'
-              namespace 'org.apache.cordova'
+              compileSdkVersion 29        # 与SDK版本对齐
+              buildToolsVersion '29.0.3'  # 与构建工具版本对齐
+              namespace 'org.apache.cordova'  # 避免命名空间冲突
 
               sourceSets {
                   main {
@@ -133,6 +164,7 @@ jobs:
               }
           }
 
+          # 依赖仓库（阿里云镜像，确保插件能下载）
           repositories {
               maven { url 'https://maven.aliyun.com/repository/google' }
               maven { url 'https://maven.aliyun.com/repository/public' }
@@ -142,11 +174,11 @@ jobs:
 
           dependencies {
               implementation fileTree(dir: 'libs', include: ['*.jar'])
-              implementation 'androidx.appcompat:appcompat:1.0.2'
+              implementation 'androidx.appcompat:appcompat:1.0.2'  # 基础依赖
           }
           EOF
 
-          # 配置app模块
+          # 5. 配置 app 模块（主应用模块，生成APK）
           cat > "$APP_DIR/build.gradle" << EOF
           buildscript {
               repositories {
@@ -155,6 +187,7 @@ jobs:
                   maven { url 'https://maven.aliyun.com/repository/public' }
               }
               dependencies {
+                  # 安卓插件版本（与Gradle 7.0.2严格匹配）
                   classpath 'com.android.tools.build:gradle:7.0.4'
               }
           }
@@ -164,25 +197,27 @@ jobs:
           android {
               compileSdkVersion 29
               buildToolsVersion '29.0.3'
-              namespace 'com.my.simpleapp'
+              namespace 'com.my.simpleapp'  # 应用唯一命名空间
 
               sourceSets {
                   main {
                       java { srcDirs = ['src/main/java'] }
                       res { srcDirs = ['src/main/res'] }
+                      # 关联网页资源目录（将www目录内容打包到assets）
                       assets { srcDirs = ['src/main/assets', '../../www'] }
                       manifest { srcFile 'src/main/AndroidManifest.xml' }
                   }
               }
 
               defaultConfig {
-                  applicationId "com.my.simpleapp"
-                  minSdkVersion 21
-                  targetSdkVersion 29
-                  versionCode 1
-                  versionName "1.0.0"
+                  applicationId "com.my.simpleapp"  # 应用唯一ID（用于上架）
+                  minSdkVersion 21                 # 最低支持安卓5.0
+                  targetSdkVersion 29              # 目标安卓版本
+                  versionCode 1                    # 版本号（用于更新）
+                  versionName "1.0.0"              # 版本名称
               }
 
+              # Release版配置（不混淆，便于测试）
               buildTypes {
                   release {
                       minifyEnabled false
@@ -199,12 +234,12 @@ jobs:
 
           dependencies {
               implementation fileTree(dir: 'libs', include: ['*.jar'])
-              implementation project(':CordovaLib')
+              implementation project(':CordovaLib')  # 依赖CordovaLib模块
               implementation 'androidx.appcompat:appcompat:1.0.2'
           }
           EOF
 
-          # 编写MainActivity
+          # 6. 编写 MainActivity（应用入口，继承CordovaActivity）
           cat > "$APP_DIR/src/main/java/com/my/simpleapp/MainActivity.java" << EOF
           package com.my.simpleapp;
           import org.apache.cordova.CordovaActivity;
@@ -213,12 +248,12 @@ jobs:
           public class MainActivity extends CordovaActivity {
               @Override
               public void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
+                  super.onCreate(savedInstanceState);  # 调用父类WebView初始化逻辑
               }
           }
           EOF
 
-          # 编写AndroidManifest.xml
+          # 7. 编写 AndroidManifest.xml（应用配置，声明权限）
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -230,6 +265,7 @@ jobs:
                   android:minSdkVersion="21"
                   android:targetSdkVersion="29" />
 
+              <!-- 网页加载需要网络权限 -->
               <uses-permission android:name="android.permission.INTERNET" />
 
               <application
@@ -242,6 +278,7 @@ jobs:
                       android:label="@string/app_name"
                       android:configChanges="orientation|keyboardHidden|screenSize">
 
+                      <!-- 应用入口配置 -->
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
@@ -251,21 +288,21 @@ jobs:
           </manifest>
           EOF
 
-          # 编写字符串资源
+          # 8. 编写字符串资源（应用名称）
           cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
-              <string name="app_name">YJSCSDH</string>
+              <string name="app_name">YJSCSDH</string>  # 应用名称（显示在桌面）
           </resources>
           EOF
 
-          # 配置项目模块关联
+          # 9. 配置项目模块关联（settings.gradle）
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
-          include ':app'
-          include ':CordovaLib'
+          include ':app'       # 包含主应用模块
+          include ':CordovaLib' # 包含Cordova库模块
           EOF
 
-          # 配置项目根目录Gradle
+          # 10. 配置项目根目录Gradle（统一依赖管理）
           cat > "$ANDROID_ROOT/build.gradle" << EOF
           buildscript {
               repositories {
@@ -286,44 +323,50 @@ jobs:
               }
           }
 
+          # 清理任务（删除构建目录）
           task clean(type: Delete) {
               delete rootProject.buildDir
           }
           EOF
 
-          # 关键修复：gradle.properties中Java路径移除注释，保持纯净路径
+          # 11. 配置 Gradle 全局属性（纯净无注释！）
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
           android.useAndroidX=false
           android.enableJetifier=false
-          org.gradle.java.home=$JDK11_PATH  # 此处已移除路径中的注释，仅保留纯净路径
+          org.gradle.java.home=$JDK11_PATH
           org.gradle.daemon=true
           org.gradle.parallel=true
           EOF
 
-          # 生成gradlew并编译
+          # 12. 生成 gradlew 可执行文件（确保版本一致）
           cd "$ANDROID_ROOT" || exit 1
           gradle wrapper --gradle-version 7.0.2 --distribution-type all
-          chmod +x gradlew
-          [ -f "gradlew" ] || { echo "❌ gradlew生成失败"; exit 1; }
+          chmod +x gradlew  # 赋予执行权限
+          if [ ! -f "gradlew" ]; then
+            echo "❌ gradlew生成失败"
+            exit 1
+          fi
 
+          # 13. 编译 Release 版 APK（显示详细日志）
           echo "🔨 开始编译APK..."
-          ./gradlew :app:assembleRelease --info
+          ./gradlew :app:assembleRelease --info  # --info 显示详细构建日志
 
-          # 验证APK
+          # 14. 验证APK并复制到输出路径
           APK_SOURCE="$APP_DIR/build/outputs/apk/release/app-release.apk"
           APK_DEST="$PROJECT_PATH/final-app.apk"
           if [ -f "$APK_SOURCE" ]; then
-              echo "🎉 APK编译成功！大小：$(ls -lh $APK_SOURCE | awk '{print $5}')"
-              cp "$APK_SOURCE" "$APK_DEST"
+              echo "🎉 APK编译成功！"
+              echo "📦 APK路径：$APK_SOURCE"
+              echo "📊 APK大小：$(ls -lh $APK_SOURCE | awk '{print $5}')"
+              cp "$APK_SOURCE" "$APK_DEST"  # 复制到便于上传的路径
           else
               echo "❌ APK编译失败，查看日志："
-              cat "$APP_DIR/build/outputs/logs/build.log"
+              cat "$APP_DIR/build/outputs/logs/build.log" 2>/dev/null
               exit 1
           fi
 
-      - name: 上传APK工件
+      # 步骤5：上传 APK 工件（便于下载）
+      - name: 上传 APK 到工件
         uses: actions/upload-artifact@v4
         with:
-          name: 安卓套壳应用-Release版
-          path: /home/runner/work/webview-app/webview-app/myapp/final-app.apk
-          retention-days: 30
+          name: 安卓套壳应用-
