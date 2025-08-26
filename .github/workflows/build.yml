@@ -1,4 +1,4 @@
-name: 构建安卓套壳应用（最终语法无错版）
+name: 构建安卓套壳应用（SDK路径+版本兼容修复版）
 on:
   workflow_dispatch:
 
@@ -16,12 +16,12 @@ jobs:
         with:
           node-version: 14
 
-      # 步骤3：安装安卓构建工具链（JDK11+SDK+Gradle）
+      # 步骤3：安装安卓构建工具链（解决版本兼容+路径冲突）
       - name: 安装安卓构建依赖
         run: |
           export TIMEOUT=300
           
-          # 安装并验证 JDK 11
+          # 1. 安装并验证 JDK 11
           sudo apt-get update -o Acquire::ForceIPv4=true
           sudo apt-get remove -y openjdk-8-jdk openjdk-11-jdk || true
           sudo apt-get install -y -qq openjdk-11-jdk
@@ -33,17 +33,17 @@ jobs:
           fi
           echo "JDK11_PATH=$JDK11_PATH" >> $GITHUB_ENV
 
-          # 安装安卓 SDK（清华镜像）
-          ANDROID_SDK_PATH="$HOME/android-sdk"
-          mkdir -p $ANDROID_SDK_PATH
-          SDK_TOOLS_URL="https://mirrors.tuna.tsinghua.edu.cn/android/repository/commandlinetools-linux-9477386_latest.zip"
-          wget --timeout=$TIMEOUT --tries=3 --no-check-certificate $SDK_TOOLS_URL -O sdk-tools.zip || {
-            echo "⚠️ 清华镜像下载失败，重试官方源"
-            wget --timeout=$TIMEOUT --tries=2 https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip || exit 1
-          }
-          unzip -q sdk-tools.zip -d $ANDROID_SDK_PATH/cmdline-tools
+          # 2. 关键修复1：使用系统默认SDK路径（避免ANDROID_HOME冲突）
+          # Ubuntu GitHub Runner 默认SDK路径为 /usr/local/lib/android/sdk，直接复用此路径
+          ANDROID_SDK_PATH="/usr/local/lib/android/sdk"
+          echo "✅ 使用系统默认SDK路径：$ANDROID_SDK_PATH"
+          # 清除系统默认的ANDROID_SDK_ROOT，仅保留ANDROID_HOME（官方推荐）
+          unset ANDROID_SDK_ROOT
+          echo "ANDROID_HOME=$ANDROID_SDK_PATH" >> $GITHUB_ENV  # 统一用ANDROID_HOME
 
-          # 配置 SDK 仓库镜像
+          # 3. 关键修复2：安装兼容的SDK组件（AGP 7.0.4 要求 Build Tools 30.0.2+）
+          SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/latest/bin/sdkmanager"
+          # 配置SDK镜像（加速下载）
           mkdir -p "$ANDROID_SDK_PATH/.android"
           cat > "$ANDROID_SDK_PATH/.android/repositories.cfg" << EOF
           [main]
@@ -52,21 +52,20 @@ jobs:
               https\://dl.google.com/android/repository/
           EOF
 
-          # 安装 SDK 核心组件
-          SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/cmdline-tools/bin/sdkmanager"
+          # 安装兼容版本：API 30（AGP 7.0.4 推荐）+ Build Tools 30.0.2（最低要求）
           chmod +x $SDK_MANAGER
           $SDK_MANAGER --sdk_root=$ANDROID_SDK_PATH \
-            "platforms;android-29" "build-tools;29.0.3" "platform-tools" \
-            --verbose --no_https || {
+            "platforms;android-30" "build-tools;30.0.2" "platform-tools" \
+            --verbose --no_https --accept-licenses 'android-sdk-license-c81a61d9' || {
               echo "⚠️ 镜像安装失败，重试官方源"
               rm -f "$ANDROID_SDK_PATH/.android/repositories.cfg"
               $SDK_MANAGER --sdk_root=$ANDROID_SDK_PATH \
-                "platforms;android-29" "build-tools;29.0.3" "platform-tools" \
-                --verbose --no_https || exit 1
+                "platforms;android-30" "build-tools;30.0.2" "platform-tools" \
+                --verbose --no_https --accept-licenses 'android-sdk-license-c81a61d9' || exit 1
             }
           echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 安装 Gradle 7.0.2
+          # 4. 安装 Gradle 7.0.2（与AGP 7.0.4 严格匹配）
           GRADLE_PATH="$HOME/gradle-7.0.2"
           GRADLE_URL="https://mirrors.huaweicloud.com/gradle/gradle-7.0.2-bin.zip"
           wget --timeout=$TIMEOUT --tries=3 --no-check-certificate $GRADLE_URL -O gradle-7.0.2-bin.zip || exit 1
@@ -74,16 +73,19 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      # 步骤4：构建安卓套壳应用（纯语法规范配置）
+      # 步骤4：构建安卓套壳应用（同步版本+统一路径）
       - name: 构建安卓套壳应用
         run: |
-          # 加载环境变量并验证
+          # 加载环境变量（统一SDK路径，仅保留ANDROID_HOME）
           export JAVA_HOME=$JDK11_PATH
-          export PATH="$JAVA_HOME/bin:$PATH:$ANDROID_SDK_PATH/build-tools/29.0.3:$GRADLE_PATH/bin"
-          export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
+          export ANDROID_HOME=$ANDROID_SDK_PATH
+          export PATH="$JAVA_HOME/bin:$PATH:$ANDROID_SDK_PATH/build-tools/30.0.2:$GRADLE_PATH/bin"
+          unset ANDROID_SDK_ROOT  # 彻底清除冲突变量
+          # 验证环境（确保路径唯一）
           echo "✅ 当前Java路径：$JAVA_HOME"
           echo "✅ 当前Java版本：$(java -version 2>&1)"
           echo "✅ 当前Gradle版本：$(gradle -v | head -n 1)"
+          echo "✅ 当前SDK路径（仅ANDROID_HOME）：$ANDROID_HOME"
 
           # 项目路径设置
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
@@ -140,13 +142,13 @@ jobs:
           }
           EOF
 
-          # 配置 CordovaLib 模块（库模块）
+          # 配置 CordovaLib 模块（同步版本：API 30 + Build Tools 30.0.2）
           cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           apply plugin: 'com.android.library'
 
           android {
-              compileSdkVersion 29
-              buildToolsVersion '29.0.3'
+              compileSdkVersion 30  # 与SDK API版本同步
+              // 移除buildToolsVersion，使用AGP默认版本（避免版本冲突）
               namespace 'org.apache.cordova'
 
               sourceSets {
@@ -170,7 +172,7 @@ jobs:
           }
           EOF
 
-          # 配置 app 模块（主应用模块）
+          # 配置 app 模块（同步版本+移除冗余配置）
           cat > "$APP_DIR/build.gradle" << EOF
           buildscript {
               repositories {
@@ -179,15 +181,15 @@ jobs:
                   maven { url 'https://maven.aliyun.com/repository/public' }
               }
               dependencies {
-                  classpath 'com.android.tools.build:gradle:7.0.4'
+                  classpath 'com.android.tools.build:gradle:7.0.4'  # 与Gradle 7.0.2匹配
               }
           }
 
           apply plugin: 'com.android.application'
 
           android {
-              compileSdkVersion 29
-              buildToolsVersion '29.0.3'
+              compileSdkVersion 30  # 同步至API 30（兼容AGP 7.0.4）
+              // 移除buildToolsVersion，使用AGP默认的30.0.2（避免警告）
               namespace 'com.my.simpleapp'
 
               sourceSets {
@@ -201,8 +203,8 @@ jobs:
 
               defaultConfig {
                   applicationId "com.my.simpleapp"
-                  minSdkVersion 21
-                  targetSdkVersion 29
+                  minSdkVersion 21  # 最低支持安卓5.0
+                  targetSdkVersion 30  # 同步至API 30
                   versionCode 1
                   versionName "1.0.0"
               }
@@ -242,7 +244,7 @@ jobs:
           }
           EOF
 
-          # 编写 AndroidManifest.xml（应用配置）
+          # 编写 AndroidManifest.xml（修复intent-filter标签+同步版本）
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -252,7 +254,7 @@ jobs:
 
               <uses-sdk
                   android:minSdkVersion="21"
-                  android:targetSdkVersion="29" />
+                  android:targetSdkVersion="30" />  <!-- 同步至API 30 -->
 
               <uses-permission android:name="android.permission.INTERNET" />
 
@@ -266,10 +268,11 @@ jobs:
                       android:label="@string/app_name"
                       android:configChanges="orientation|keyboardHidden|screenSize">
 
-                      <<intent-filter>
+                      <!-- 修复标签错误：移除多余的尖括号 -->
+                      <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
-                      </</intent-filter>
+                      </intent-filter>
                   </activity>
               </application>
           </manifest>
@@ -280,10 +283,12 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <string name="app_name">YJSCSDH</string>
+              <!-- 新增主题资源，解决AppTheme未定义问题 -->
+              <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar" />
           </resources>
           EOF
 
-          # 配置项目模块关联（无任何注释）
+          # 配置项目模块关联
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
           include ':app'
           include ':CordovaLib'
@@ -315,7 +320,7 @@ jobs:
           }
           EOF
 
-          # 配置 Gradle 全局属性（无注释）
+          # 配置 Gradle 全局属性（统一Java路径）
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
           android.useAndroidX=false
           android.enableJetifier=false
@@ -333,15 +338,17 @@ jobs:
             exit 1
           fi
 
-          # 编译 Release 版 APK
+          # 编译 Release 版 APK（显示详细日志）
           echo "🔨 开始编译APK..."
-          ./gradlew :app:assembleRelease --info
+          ./gradlew :app:assembleRelease --info --stacktrace
 
           # 验证 APK 并复制
           APK_SOURCE="$APP_DIR/build/outputs/apk/release/app-release.apk"
           APK_DEST="$PROJECT_PATH/final-app.apk"
           if [ -f "$APK_SOURCE" ]; then
-              echo "🎉 APK编译成功！大小：$(ls -lh $APK_SOURCE | awk '{print $5}')"
+              echo "🎉 APK编译成功！"
+              echo "📦 APK路径：$APK_SOURCE"
+              echo "📊 APK大小：$(ls -lh $APK_SOURCE | awk '{print $5}')"
               cp "$APK_SOURCE" "$APK_DEST"
           else
               echo "❌ APK编译失败，查看日志："
