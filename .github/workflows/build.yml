@@ -1,4 +1,4 @@
-name: 构建安卓应用（调整步骤顺序，最终成功）
+name: 构建安卓应用（强制JDK8，最终成功）
 on:
   workflow_dispatch:
 
@@ -46,11 +46,19 @@ jobs:
           echo "GLOBAL_APP_MANIFEST_DIR=$GLOBAL_APP_MANIFEST_DIR" >> $GITHUB_ENV
           cordova -v
 
-      - name: 安装JDK 8
+      - name: 彻底清理旧JDK并安装JDK8
         run: |
+          # 卸载所有可能的高版本JDK
+          sudo apt-get remove -y openjdk-11-jdk openjdk-17-jdk default-jdk
+          # 安装纯净JDK8
           sudo apt-get update
-          sudo apt-get install openjdk-8-jdk -y
-          echo "JDK8_PATH=/usr/lib/jvm/java-8-openjdk-amd64" >> $GITHUB_ENV
+          sudo apt-get install -y openjdk-8-jdk
+          # 明确JDK8路径
+          JDK8_PATH=$(update-alternatives --list java | grep "java-8-openjdk" | sed 's/bin\/java//')
+          echo "JDK8_PATH=$JDK8_PATH" >> $GITHUB_ENV
+          # 验证版本
+          java -version 2>&1 | grep -q "1.8.0" || { echo "❌ JDK8安装失败"; exit 1; }
+          echo "✅ JDK8安装验证通过：$JDK8_PATH"
 
       - name: 安装安卓SDK
         run: |
@@ -71,9 +79,15 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（先加平台再清理）
+      - name: 构建项目（强制使用JDK8）
         run: |
+          # 彻底清理环境变量，只保留JDK8
           export JAVA_HOME=$JDK8_PATH
+          export PATH="$JAVA_HOME/bin:$PATH"
+          unset JRE_HOME
+          # 验证Java版本（必须是1.8）
+          java -version 2>&1 | grep -q "1.8.0" || { echo "❌ 未使用JDK8"; java -version; exit 1; }
+          # 配置安卓SDK
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
           export GRADLE_HOME=$GRADLE_PATH
           
@@ -97,11 +111,11 @@ jobs:
           
           cd "$PROJECT_PATH"
           
-          # 3. 先添加安卓平台（关键：必须在clean前执行，否则无平台可清）
+          # 3. 添加安卓平台
           cordova platform add android@9.0.0
           sleep 5
           
-          # 4. 再执行清理（此时平台已存在，可正常清理）
+          # 4. 清理项目
           cordova clean android
           
           # 5. 补全项目内资源
@@ -146,7 +160,7 @@ jobs:
           cp "$API_JS_PATH" "$CORDOVA_DIR/Api.js"
           cp "$DEFAULTS_XML_PATH" "$CORDOVA_DIR/defaults.xml"
           
-          # 9. 配置Gradle（禁用AndroidX）
+          # 9. 强制Gradle使用JDK8并禁用AndroidX
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
