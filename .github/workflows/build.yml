@@ -1,4 +1,4 @@
-name: 构建安卓套壳应用（完整版）
+name: 构建安卓套壳应用（完整最终版）
 on:
   workflow_dispatch:
 
