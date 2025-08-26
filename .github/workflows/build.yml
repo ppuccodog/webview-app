@@ -1,4 +1,4 @@
-name: 构建安卓应用（强制JDK8，最终成功）
+name: 构建安卓应用（固定JDK8路径，终极成功）
 on:
   workflow_dispatch:
 
@@ -46,19 +46,23 @@ jobs:
           echo "GLOBAL_APP_MANIFEST_DIR=$GLOBAL_APP_MANIFEST_DIR" >> $GITHUB_ENV
           cordova -v
 
-      - name: 彻底清理旧JDK并安装JDK8
+      - name: 安装JDK8（直接用固定路径）
         run: |
-          # 卸载所有可能的高版本JDK
-          sudo apt-get remove -y openjdk-11-jdk openjdk-17-jdk default-jdk
-          # 安装纯净JDK8
+          # 安装JDK8（不卸载其他，避免依赖冲突）
           sudo apt-get update
           sudo apt-get install -y openjdk-8-jdk
-          # 明确JDK8路径
-          JDK8_PATH=$(update-alternatives --list java | grep "java-8-openjdk" | sed 's/bin\/java//')
+          # Ubuntu系统JDK8固定路径（从日志和系统默认路径推导）
+          JDK8_PATH="/usr/lib/jvm/java-8-openjdk-amd64"
+          # 验证路径存在且是JDK8
+          if [ ! -d "$JDK8_PATH" ]; then
+            echo "❌ JDK8路径不存在，尝试自动查找..."
+            JDK8_PATH=$(find /usr/lib/jvm -name "java-8-openjdk*" | head -1)
+            [ -d "$JDK8_PATH" ] || { echo "❌ 未找到JDK8安装目录"; exit 1; }
+          fi
+          # 验证Java版本（必须是1.8）
+          "$JDK8_PATH/bin/java" -version 2>&1 | grep -q "1.8.0" || { echo "❌ 路径不是JDK8"; "$JDK8_PATH/bin/java" -version; exit 1; }
+          echo "✅ JDK8安装验证通过，路径：$JDK8_PATH"
           echo "JDK8_PATH=$JDK8_PATH" >> $GITHUB_ENV
-          # 验证版本
-          java -version 2>&1 | grep -q "1.8.0" || { echo "❌ JDK8安装失败"; exit 1; }
-          echo "✅ JDK8安装验证通过：$JDK8_PATH"
 
       - name: 安装安卓SDK
         run: |
@@ -79,13 +83,14 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（强制使用JDK8）
+      - name: 构建项目（强制JDK8）
         run: |
-          # 彻底清理环境变量，只保留JDK8
+          # 强制指定JDK8路径，覆盖所有环境变量
           export JAVA_HOME=$JDK8_PATH
           export PATH="$JAVA_HOME/bin:$PATH"
-          unset JRE_HOME
-          # 验证Java版本（必须是1.8）
+          export JRE_HOME="$JAVA_HOME/jre"
+          # 再次验证Java版本（确保编译前环境正确）
+          echo "🔍 验证当前Java版本："
           java -version 2>&1 | grep -q "1.8.0" || { echo "❌ 未使用JDK8"; java -version; exit 1; }
           # 配置安卓SDK
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
@@ -137,14 +142,8 @@ jobs:
           mkdir -p "$ACTIVITY_DIR"
           echo -e "package com.my.simpleapp;\n\nimport org.apache.cordova.CordovaActivity;\nimport android.os.Bundle;\n\npublic class MainActivity extends CordovaActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n        loadUrl(launchUrl);\n    }\n}" > "$ACTIVITY_DIR/MainActivity.java"
           # 验证文件
-          if [ ! -f "$ACTIVITY_DIR/MainActivity.java" ]; then
-            echo "❌ Activity文件未创建"
-            exit 1
-          fi
-          if ! grep -q "extends CordovaActivity" "$ACTIVITY_DIR/MainActivity.java"; then
-            echo "❌ Activity继承错误"
-            exit 1
-          fi
+          [ -f "$ACTIVITY_DIR/MainActivity.java" ] || { echo "❌ Activity文件未创建"; exit 1; }
+          grep -q "extends CordovaActivity" "$ACTIVITY_DIR/MainActivity.java" || { echo "❌ Activity继承错误"; exit 1; }
           echo "✅ 项目内Activity验证通过"
           
           # 7. 配置Gradle源码目录
