@@ -1,4 +1,4 @@
-name: 构建安卓应用（更换包名解决路径混淆）
+name: 构建安卓应用（生成package.json解决包名冲突）
 on:
   workflow_dispatch:
 
@@ -14,10 +14,9 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局安装Cordova+清理缓存
+      - name: 全局安装Cordova
         run: |
           npm config set registry https://registry.npmjs.org/
-          # 清理npm缓存，避免旧依赖干扰
           npm cache clean --force
           npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
           cordova -v
@@ -50,34 +49,34 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 更换包名+编译（解决路径混淆）
+      - name: 生成package.json+编译（彻底解决包名冲突）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
           export GRADLE_HOME=$GRADLE_PATH
           
-          # 1. 项目路径+更换简单包名（避免与模块名冲突）
+          # 1. 项目路径（固定）
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
-          SIMPLE_PACKAGE="com.example.myapp"  # 更简单的包名，避免混淆
-          echo "项目路径：$PROJECT_PATH，包名：$SIMPLE_PACKAGE"
+          echo "项目路径：$PROJECT_PATH"
           
-          # 2. 清理旧项目（避免残留文件干扰）
-          rm -rf "$PROJECT_PATH"
+          # 2. 关键：在项目根目录生成空package.json，明确项目名称（避免Cordova自动混淆）
+          echo '{"name": "my-webview-app", "version": "1.0.0", "private": true}' > "$PROJECT_PATH/package.json"
+          echo "✅ 生成package.json，项目名称：my-webview-app"
           
-          # 3. 创建项目（用新包名）
-          cordova create "$PROJECT_PATH" "$SIMPLE_PACKAGE" "我的网页APP"
+          # 3. 创建Cordova项目（此时会读取package.json，不冲突）
+          cordova create "$PROJECT_PATH" com.example.myapp "我的网页APP" --force
           
-          # 4. 生成config.xml（匹配新包名）
+          # 4. 生成config.xml（匹配包名）
           echo '<?xml version="1.0" encoding="utf-8"?>
-          <widget id="'$SIMPLE_PACKAGE'" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+          <widget id="com.example.myapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
             <content src="index.html" />
             <access origin="*" />
             <preference name="AndroidXEnabled" value="false" />
           </widget>' > "$PROJECT_PATH/config.xml"
           
-          # 5. 添加安卓平台（用新包名，避免路径混淆）
+          # 5. 添加安卓平台（此时无包名冲突）
           cordova platform add android@9.0.0 --project "$PROJECT_PATH"
           
           # 6. 等待2秒+验证平台目录
