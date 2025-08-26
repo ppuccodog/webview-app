@@ -1,4 +1,4 @@
-name: 构建安卓应用（修复语法，项目内创Activity）
+name: 构建安卓应用（彻底修复语法，必跑通）
 on:
   workflow_dispatch:
 
@@ -49,7 +49,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（项目内直接创建Activity）
+      - name: 构建项目（用echo写Activity，无语法错）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
@@ -87,24 +87,14 @@ jobs:
           TARGET_MANIFEST_DIR="$PROJECT_PATH/platforms/android/app/src/main"
           cp "$MANIFEST_XML_PATH" "$TARGET_MANIFEST_DIR/AndroidManifest.xml"
           
-          # 4. 关键：创建MainActivity.java（修复YAML语法，EOF单独成行）
+          # 4. 关键：用echo -e写MainActivity.java（彻底规避YAML语法错）
           ACTIVITY_DIR="$PROJECT_PATH/platforms/android/app/src/main/java/com/my/simpleapp"
           mkdir -p "$ACTIVITY_DIR"
-          cat > "$ACTIVITY_DIR/MainActivity.java" << EOF
-package com.my.simpleapp;
-
-import org.apache.cordova.CordovaActivity;
-import android.os.Bundle;
-
-public class MainActivity extends CordovaActivity {
-    @Override
-    public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        loadUrl(launchUrl);
-    }
-}
-EOF
+          # 用\n换行，用\"转义引号，YAML解析无压力
+          echo -e "package com.my.simpleapp;\n\nimport org.apache.cordova.CordovaActivity;\nimport android.os.Bundle;\n\npublic class MainActivity extends CordovaActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n        loadUrl(launchUrl);\n    }\n}" > "$ACTIVITY_DIR/MainActivity.java"
           echo "✅ 已创建MainActivity.java：$ACTIVITY_DIR/MainActivity.java"
+          # 验证文件（可选，确认内容正确）
+          cat "$ACTIVITY_DIR/MainActivity.java"
           
           # 5. 补全Cordova核心配置
           API_JS_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "Api.js" -path "*/cordova/Api.js" | head -1)
