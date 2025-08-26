@@ -1,4 +1,4 @@
-name: 构建安卓应用（跳过检查，直接用目录）
+name: 构建安卓应用（手动创建所有目录，必成）
 on:
   workflow_dispatch:
 
@@ -49,7 +49,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（直接用生成的目录）
+      - name: 构建项目（手动创建所有关键目录）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
@@ -61,42 +61,52 @@ jobs:
           mkdir -p "$PROJECT_PATH/www"
           sudo chmod -R 777 "$PROJECT_PATH"
           
-          # 创建配置
+          # 1. 创建核心配置文件
           echo '{"name":"x-app","version":"1.0.0","private":true,"cordova":{"platforms":["android"]}}' > "$PROJECT_PATH/package.json"
           echo '<?xml version="1.0"?><widget id="com.x.app" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0"><name>XApp</name><content src="index.html"/></widget>' > "$PROJECT_PATH/config.xml"
           echo '<html><body>Hello</body></html>' > "$PROJECT_PATH/www/index.html"
           
           cd "$PROJECT_PATH"
           
-          # 只执行一次添加平台，不管判断，直接往下走
-          echo "🔄 添加安卓平台"
+          # 2. 执行platform add（不管它是否生成目录）
           cordova platform add android@9.0.0
-          sleep 10  # 等目录生成
+          sleep 5
           
-          # 直接指定目录，不做检查（日志证明目录已生成）
+          # 3. 关键：手动创建platforms/android/app目录（cordova没生成的我们补）
           ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
           ANDROID_APP_PATH="$ANDROID_PLATFORM_PATH/app"
-          echo "✅ 强制使用平台目录：$ANDROID_PLATFORM_PATH"
+          # 不管cordova有没有生成，我们手动创建一次，确保存在
+          mkdir -p "$ANDROID_APP_PATH"
+          sudo chmod -R 777 "$ANDROID_PLATFORM_PATH"
+          echo "✅ 手动创建app目录：$ANDROID_APP_PATH"
           
-          # 配置Gradle（目录肯定在）
+          # 4. 现在写gradle.properties（目录肯定存在了）
           touch "$ANDROID_APP_PATH/gradle.properties"
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
-          echo "✅ Gradle配置完成"
+          echo "✅ 成功写入gradle.properties"
           
-          # 编译APK（直接编译，不纠结检查）
+          # 5. 手动补全Cordova必要的build.gradle（防止编译缺文件）
+          if [ ! -f "$ANDROID_PLATFORM_PATH/build.gradle" ]; then
+            echo "// 手动补全的build.gradle" > "$ANDROID_PLATFORM_PATH/build.gradle"
+            echo "buildscript { repositories { jcenter() maven { url 'https://maven.google.com' } } dependencies { classpath 'com.android.tools.build:gradle:4.1.3' } }" >> "$ANDROID_PLATFORM_PATH/build.gradle"
+            echo "allprojects { repositories { jcenter() maven { url 'https://maven.google.com' } } }" >> "$ANDROID_PLATFORM_PATH/build.gradle"
+            echo "✅ 手动补全build.gradle"
+          fi
+          
+          # 6. 编译APK（这次文件全齐了）
           echo "🔨 开始编译APK"
           cordova build android --release
           
-          # 检查APK
+          # 7. 检查APK
           APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release-unsigned.apk"
           if [ -f "$APK_PATH" ]; then
-            echo "🎉 APK生成成功！"
+            echo "🎉 APK生成成功！路径：$APK_PATH"
             cp "$APK_PATH" "/home/runner/work/webview-app/webview-app/final-app.apk"
           else
             echo "❌ 编译失败，日志："
-            cat "$ANDROID_PLATFORM_PATH/build/outputs/logs/build.log"
+            cat "$ANDROID_PLATFORM_PATH/build/outputs/logs/build.log" 2>/dev/null || echo "日志文件不存在，直接看编译输出"
             exit 1
           fi
 
