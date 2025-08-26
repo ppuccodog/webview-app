@@ -1,4 +1,4 @@
-name: 构建安卓应用（sdkmanager修复版）
+name: 构建安卓应用（Gradle版本修复版）
 on:
   workflow_dispatch:
 
@@ -14,7 +14,7 @@ jobs:
         with:
           node-version: 14
 
-      - name: 安装安卓构建工具链（修复仓库配置）
+      - name: 安装安卓构建工具链
         run: |
           export TIMEOUT=300
           
@@ -34,11 +34,7 @@ jobs:
           }
           unzip -q sdk-tools.zip -d $ANDROID_SDK_PATH/cmdline-tools
 
-          # 关键修复：通过环境变量配置仓库，替代--repository参数
-          SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/cmdline-tools/bin/sdkmanager"
-          chmod +x $SDK_MANAGER
-          
-          # 配置安卓仓库镜像（清华镜像）
+          # 配置安卓仓库镜像
           echo "配置安卓仓库镜像..."
           mkdir -p "$ANDROID_SDK_PATH/.android"
           cat > "$ANDROID_SDK_PATH/.android/repositories.cfg" << EOF
@@ -50,13 +46,14 @@ jobs:
               https\://dl.google.com/android/repository/
           EOF
 
-          # 安装SDK组件（移除--repository参数，改用配置文件）
+          # 安装SDK组件
+          SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/cmdline-tools/bin/sdkmanager"
+          chmod +x $SDK_MANAGER
           echo "安装SDK组件..."
           $SDK_MANAGER --sdk_root=$ANDROID_SDK_PATH \
             "platforms;android-29" "build-tools;29.0.3" "platform-tools" \
             --verbose --no_https || {
               echo "镜像安装失败，重试官方源"
-              # 移除镜像配置，使用官方源
               rm -f "$ANDROID_SDK_PATH/.android/repositories.cfg"
               $SDK_MANAGER --sdk_root=$ANDROID_SDK_PATH \
                 "platforms;android-29" "build-tools;29.0.3" "platform-tools" \
@@ -64,11 +61,11 @@ jobs:
             }
           echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 安装Gradle 7.0
-          GRADLE_PATH="$HOME/gradle-7.0"
-          GRADLE_URL="https://mirrors.huaweicloud.com/gradle/gradle-7.0-bin.zip"
-          wget --timeout=$TIMEOUT --tries=3 --no-check-certificate $GRADLE_URL -O gradle-7.0-bin.zip || exit 1
-          unzip -q gradle-7.0-bin.zip -d $HOME
+          # 关键修复：升级Gradle至7.0.2（与插件7.0.4匹配）
+          GRADLE_PATH="$HOME/gradle-7.0.2"
+          GRADLE_URL="https://mirrors.huaweicloud.com/gradle/gradle-7.0.2-bin.zip"
+          wget --timeout=$TIMEOUT --tries=3 --no-check-certificate $GRADLE_URL -O gradle-7.0.2-bin.zip || exit 1
+          unzip -q gradle-7.0.2-bin.zip -d $HOME
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
@@ -84,7 +81,7 @@ jobs:
           mkdir -p "$PROJECT_PATH"
           cd "$PROJECT_PATH" || exit 1
 
-          # 创建项目结构（与之前版本相同）
+          # 创建项目结构
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
@@ -97,7 +94,7 @@ jobs:
           # 编写网页测试页面
           echo '<!DOCTYPE html><html><body style="background:#fff;"><h1>测试成功！</h1></body></html>' > "$PROJECT_PATH/www/index.html"
 
-          # 编写CordovaLib核心代码（与之前版本相同）
+          # 编写CordovaLib核心代码
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/CordovaActivity.java" << EOF
           package org.apache.cordova;
           import android.app.Activity;
@@ -121,7 +118,6 @@ jobs:
           }
           EOF
 
-          # 项目配置文件（使用阿里云gradle插件仓库）
           # CordovaLib的build.gradle
           cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           apply plugin: 'com.android.library'
@@ -211,7 +207,7 @@ jobs:
           }
           EOF
 
-          # 其他配置文件（与之前版本相同）
+          # 其他配置文件
           cat > "$APP_DIR/src/main/java/com/my/simpleapp/MainActivity.java" << EOF
           package com.my.simpleapp;
           import org.apache.cordova.CordovaActivity;
@@ -303,9 +299,9 @@ jobs:
           org.gradle.parallel=true
           EOF
 
-          # 生成gradlew并编译
+          # 生成gradlew（使用7.0.2版本）
           cd "$ANDROID_ROOT" || exit 1
-          gradle wrapper --gradle-version 7.0 --distribution-type all
+          gradle wrapper --gradle-version 7.0.2 --distribution-type all
           chmod +x gradlew
           [ -f "gradlew" ] || { echo "❌ gradlew生成失败"; exit 1; }
 
