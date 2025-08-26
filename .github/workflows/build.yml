@@ -1,4 +1,4 @@
-name: 构建安卓应用（终极根治版）
+name: 构建安卓应用（语法根治版）
 on:
   workflow_dispatch:
 
@@ -24,27 +24,26 @@ jobs:
           CORDOVA_ANDROID_ROOT=$(find /opt/hostedtoolcache/node -type d -name "cordova-android" -path "*/node_modules/cordova-android" | head -1)
           [ -d "$CORDOVA_ANDROID_ROOT" ] || { echo "❌ 没找到cordova-android根目录"; exit 1; }
           
-          # 终极修复：创建“空任务”的wrapper.gradle（不冲突+存在）
+          # 终极修复：创建“空任务”的wrapper.gradle
           WRAPPER_GRADLE_PATH="$CORDOVA_ANDROID_ROOT/bin/templates/wrapper.gradle"
           echo "🔧 根治wrapper.gradle问题"
           mkdir -p "$(dirname "$WRAPPER_GRADLE_PATH")"
-          # 写空任务：只定义任务但不执行操作，避免与Gradle自带任务冲突
           echo -e "// 空任务占位符，解决Cordova文件不存在错误\n task wrapper {}\n" > "$WRAPPER_GRADLE_PATH"
           [ -f "$WRAPPER_GRADLE_PATH" ] || { echo "❌ wrapper.gradle创建失败"; exit 1; }
           
-          # 定位核心资源（提前验证，避免后续缺失）
+          # 定位核心资源
           ASSETS_WWW_PATH=$(find "$CORDOVA_ANDROID_ROOT" -type d -name "www" -path "*/templates/project/assets/www" | head -1)
           STRINGS_XML_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "strings.xml" -path "*/templates/project/res/values/strings.xml" | head -1)
           MANIFEST_XML_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "AndroidManifest.xml" -path "*/templates/project/AndroidManifest.xml" | head -1)
           GLOBAL_BUILD_GRADLE=$(find "$CORDOVA_ANDROID_ROOT" -name "build.gradle" -path "*/templates/project/build.gradle" | head -1)
           
-          # 提前报错，避免后续浪费时间
+          # 提前报错
           [ -d "$ASSETS_WWW_PATH" ] || { echo "❌ 关键资源缺失：assets/www"; exit 1; }
           [ -f "$STRINGS_XML_PATH" ] || { echo "❌ 关键资源缺失：strings.xml"; exit 1; }
           [ -f "$MANIFEST_XML_PATH" ] || { echo "❌ 关键资源缺失：AndroidManifest.xml"; exit 1; }
           [ -f "$GLOBAL_BUILD_GRADLE" ] || { echo "❌ 关键资源缺失：全局build.gradle"; exit 1; }
           
-          # 记录环境变量（后续直接用，避免重复查找）
+          # 记录环境变量
           echo "CORDOVA_ANDROID_ROOT=$CORDOVA_ANDROID_ROOT" >> $GITHUB_ENV
           echo "ASSETS_WWW_PATH=$ASSETS_WWW_PATH" >> $GITHUB_ENV
           echo "STRINGS_XML_PATH=$STRINGS_XML_PATH" >> $GITHUB_ENV
@@ -57,7 +56,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y openjdk-8-jdk
           JDK8_PATH="/usr/lib/jvm/java-8-openjdk-amd64"
-          # 双重验证JDK8
           [ -f "$JDK8_PATH/bin/javac" ] || { echo "❌ JDK8编译器缺失"; exit 1; }
           "$JDK8_PATH/bin/java" -version 2>&1 | grep -q "1.8.0" || { echo "❌ 不是JDK8"; exit 1; }
           echo "✅ JDK8验证通过：$JDK8_PATH"
@@ -67,14 +65,11 @@ jobs:
         run: |
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p $ANDROID_SDK_PATH
-          # 下载SDK工具（固定版本，避免兼容性问题）
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
           unzip -q sdk-tools.zip -d $ANDROID_SDK_PATH/cmdline-tools
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/cmdline-tools/bin/sdkmanager"
-          # 安装固定版本的SDK和构建工具（与cordova-android@9.0.0匹配）
           yes | $SDK_MANAGER --licenses || true
           $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools" "tools"
-          # 验证SDK安装
           [ -d "$ANDROID_SDK_PATH/platforms/android-29" ] || { echo "❌ Android 29 SDK缺失"; exit 1; }
           [ -d "$ANDROID_SDK_PATH/build-tools/29.0.3" ] || { echo "❌ Build-Tools 29.0.3缺失"; exit 1; }
           echo "✅ 安卓SDK验证通过：$ANDROID_SDK_PATH"
@@ -82,34 +77,34 @@ jobs:
 
       - name: 构建项目（一步到位）
         run: |
-          # 强制环境变量（覆盖所有系统变量，避免冲突）
+          # 强制环境变量
           export JAVA_HOME=$JDK8_PATH
           export PATH="$JAVA_HOME/bin:$PATH:$ANDROID_SDK_PATH/platform-tools:$ANDROID_SDK_PATH/build-tools/29.0.3"
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
           export ANDROID_HOME=$ANDROID_SDK_PATH
           
-          # 项目路径（固定，避免找错）
+          # 项目路径
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           rm -rf "$PROJECT_PATH"
           mkdir -p "$PROJECT_PATH/www"
           sudo chmod -R 777 "$PROJECT_PATH"
           cd "$PROJECT_PATH"
           
-          # 1. 写死基础配置（避免模板读取错误）
+          # 1. 写死基础配置
           echo '{"name":"x-app","version":"1.0.0","cordova":{"platforms":["android"]}}' > package.json
           echo '<?xml version="1.0"?><widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0"><name>YJSCSDH</name><content src="index.html"/><platform name="android"><preference name="AndroidXEnabled" value="false"/></platform></widget>' > config.xml
           echo '<html><body>Hello</body></html>' > www/index.html
           
-          # 2. 添加安卓平台（直接指定模板路径，避免找错）
+          # 2. 添加安卓平台
           cordova platform add android@9.0.0 --save
           sleep 3
           
-          # 3. 直接复制build.gradle（不依赖自动生成）
+          # 3. 复制build.gradle
           ANDROID_APP_PATH="$PROJECT_PATH/platforms/android/app"
           mkdir -p "$ANDROID_APP_PATH"
           cp "$GLOBAL_BUILD_GRADLE" "$ANDROID_APP_PATH/build.gradle"
           
-          # 4. 添加Maven Central（直接写死配置，避免sed出错）
+          # 4. 关键修复：写死Maven仓库配置（修正YAML语法：用单引号EOF+内部无嵌套单引号）
           echo "🔧 写死Maven仓库配置"
           cat > "$ANDROID_APP_PATH/build.gradle" << 'EOF'
 buildscript {
@@ -169,12 +164,12 @@ dependencies {
 }
 EOF
           
-          # 5. 强制关闭AndroidX（覆盖所有配置）
+          # 5. 强制关闭AndroidX
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
           
-          # 6. 补全所有缺失文件（不依赖模板）
+          # 6. 补全所有缺失文件
           # 补Activity
           ACTIVITY_DIR="$ANDROID_APP_PATH/src/main/java/com/my/simpleapp"
           mkdir -p "$ACTIVITY_DIR"
@@ -189,12 +184,12 @@ EOF
           MANIFEST_DIR="$ANDROID_APP_PATH/src/main"
           echo -e "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\" package=\"com.my.simpleapp\" android:versionCode=\"1\" android:versionName=\"1.0.0\">\n    <uses-sdk android:minSdkVersion=\"21\" android:targetSdkVersion=\"29\"/>\n    <application android:label=\"@string/app_name\" android:icon=\"@mipmap/ic_launcher\">\n        <activity android:name=\".MainActivity\" android:label=\"@string/app_name\" android:configChanges=\"orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode\">\n            <intent-filter>\n                <action android:name=\"android.intent.action.MAIN\"/>\n                <category android:name=\"android.intent.category.LAUNCHER\"/>\n            </intent-filter>\n        </activity>\n    </application>\n</manifest>" > "$MANIFEST_DIR/AndroidManifest.xml"
           
-          # 7. 编译APK（直接用gradle命令，跳过cordova中间层）
+          # 7. 编译APK
           echo "🔨 直接编译APK"
           cd "$PROJECT_PATH/platforms/android"
           ./gradlew assembleRelease --info
           
-          # 8. 检查APK（固定路径，不依赖cordova输出）
+          # 8. 检查APK
           APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release.apk"
           if [ -f "$APK_PATH" ]; then
             echo "🎉 终于成功！APK路径：$APK_PATH"
