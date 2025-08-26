@@ -1,4 +1,4 @@
-name: 构建安卓应用（终极简化版）
+name: 构建安卓应用（更换包名解决路径混淆）
 on:
   workflow_dispatch:
 
@@ -14,12 +14,13 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局安装Cordova（不提前检查依赖）
+      - name: 全局安装Cordova+清理缓存
         run: |
           npm config set registry https://registry.npmjs.org/
-          # 直接安装Cordova，cordova-android会在add平台时自动下载
+          # 清理npm缓存，避免旧依赖干扰
+          npm cache clean --force
           npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
-          cordova -v  # 仅验证Cordova命令可用
+          cordova -v
 
       - name: 安装JDK 8和11
         run: |
@@ -49,54 +50,58 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 绝对路径创建项目+编译（核心步骤）
+      - name: 更换包名+编译（解决路径混淆）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
           export GRADLE_HOME=$GRADLE_PATH
           
-          # 1. 项目绝对路径（GitHub Actions标准工作目录）
+          # 1. 项目路径+更换简单包名（避免与模块名冲突）
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
-          echo "项目路径：$PROJECT_PATH"
+          SIMPLE_PACKAGE="com.example.myapp"  # 更简单的包名，避免混淆
+          echo "项目路径：$PROJECT_PATH，包名：$SIMPLE_PACKAGE"
           
-          # 2. 创建项目
-          cordova create "$PROJECT_PATH" com.my.simpleapp "我的网页APP"
+          # 2. 清理旧项目（避免残留文件干扰）
+          rm -rf "$PROJECT_PATH"
           
-          # 3. 生成config.xml（禁用AndroidX，避免警告）
+          # 3. 创建项目（用新包名）
+          cordova create "$PROJECT_PATH" "$SIMPLE_PACKAGE" "我的网页APP"
+          
+          # 4. 生成config.xml（匹配新包名）
           echo '<?xml version="1.0" encoding="utf-8"?>
-          <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+          <widget id="'$SIMPLE_PACKAGE'" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
             <content src="index.html" />
             <access origin="*" />
             <preference name="AndroidXEnabled" value="false" />
           </widget>' > "$PROJECT_PATH/config.xml"
           
-          # 4. 绝对路径添加安卓平台（Cordova会自动下载cordova-android）
+          # 5. 添加安卓平台（用新包名，避免路径混淆）
           cordova platform add android@9.0.0 --project "$PROJECT_PATH"
           
-          # 5. 等待2秒，确保平台文件生成
+          # 6. 等待2秒+验证平台目录
           sleep 2
           ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
           if [ ! -d "$ANDROID_PLATFORM_PATH" ]; then
-            echo "平台目录缺失，列出项目内容："
+            echo "平台目录缺失，项目内容："
             ls -l "$PROJECT_PATH"
             exit 1
           fi
           
-          # 6. 复制网页文件
+          # 7. 复制网页文件
           cp -rf "/home/runner/work/webview-app/webview-app/www/"* "$PROJECT_PATH/www/"
           cp "/home/runner/work/webview-app/webview-app/config.txt" "$PROJECT_PATH/www/"
           
-          # 7. 修复Gradle配置（添加Google仓库）
+          # 8. 修复Gradle配置
           sed -i '/jcenter.bintray.com/a \        maven { url "https://maven.google.com" }\n        maven { url "https://dl.google.com/maven/repo/" }' "$ANDROID_PLATFORM_PATH/build.gradle"
           echo "org.gradle.java.home=$JDK8_PATH" > "$ANDROID_PLATFORM_PATH/gradle.properties"
           
-          # 8. 编译APK
+          # 9. 编译APK
           cd "$PROJECT_PATH"
           cordova build android --release
           
-          # 9. 检查并复制APK
+          # 10. 检查并复制APK
           APK_PATH="$ANDROID_PLATFORM_PATH/app/build/outputs/apk/release/app-release-unsigned.apk"
           if [ -f "$APK_PATH" ]; then
             echo "🎉 APK生成成功！路径：$APK_PATH"
