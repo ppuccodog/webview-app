@@ -1,4 +1,4 @@
-name: 构建安卓应用（手动造platform_www，终极成功）
+name: 构建安卓应用（手动创建完整路径，必成功）
 on:
   workflow_dispatch:
 
@@ -14,34 +14,35 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局装Cordova+定位模板资源
+      - name: 全局装Cordova+定位核心资源
         run: |
           npm config set registry https://registry.npmjs.org/
           npm cache clean --force
           npm install -g cordova@10.0.0 cordova-android@9.0.0
-          # 只找实际存在的assets/www（用来复制）
-          ASSETS_WWW_PATH=$(find /opt/hostedtoolcache/node -type d -name "www" -path "*/cordova-android/*/templates/project/assets/www" | head -1)
-          # 找到Cordova硬编码的platform_www父目录
-          CORDOVA_TEMPLATES_PATH=$(find /opt/hostedtoolcache/node -type d -name "templates" -path "*/cordova-android/*/bin/templates" | head -1)
+          # 1. 找到cordova-android的根安装目录（所有路径的基础）
+          CORDOVA_ANDROID_ROOT=$(find /opt/hostedtoolcache/node -type d -name "cordova-android" -path "*/node_modules/cordova-android" | head -1)
+          # 2. 找到实际的网页模板（assets/www）
+          ASSETS_WWW_PATH=$(find "$CORDOVA_ANDROID_ROOT" -type d -name "www" -path "*/templates/project/assets/www" | head -1)
           
+          # 验证基础资源
+          [ -d "$CORDOVA_ANDROID_ROOT" ] || { echo "❌ 没找到cordova-android安装目录"; exit 1; }
           [ -d "$ASSETS_WWW_PATH" ] || { echo "❌ 没找到assets/www"; exit 1; }
-          [ -d "$CORDOVA_TEMPLATES_PATH" ] || { echo "❌ 没找到templates目录"; exit 1; }
           
+          echo "✅ 找到cordova-android根目录：$CORDOVA_ANDROID_ROOT"
           echo "✅ 找到assets/www：$ASSETS_WWW_PATH"
-          echo "✅ 找到templates目录：$CORDOVA_TEMPLATES_PATH"
+          # 存环境变量（后续直接用）
+          echo "CORDOVA_ANDROID_ROOT=$CORDOVA_ANDROID_ROOT" >> $GITHUB_ENV
           echo "ASSETS_WWW_PATH=$ASSETS_WWW_PATH" >> $GITHUB_ENV
-          echo "CORDOVA_TEMPLATES_PATH=$CORDOVA_TEMPLATES_PATH" >> $GITHUB_ENV
           cordova -v
 
-      - name: 安装JDK 8和11
+      - name: 安装JDK 8
         run: |
           sudo apt-get update
-          sudo apt-get install openjdk-8-jdk openjdk-11-jdk -y
+          sudo apt-get install openjdk-8-jdk -y
           echo "JDK8_PATH=/usr/lib/jvm/java-8-openjdk-amd64" >> $GITHUB_ENV
 
       - name: 安装安卓SDK
         run: |
-          export JAVA_HOME=$JDK11_PATH
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p $ANDROID_SDK_PATH
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
@@ -59,7 +60,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（手动造platform_www）
+      - name: 构建项目（手动造全路径）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
@@ -70,53 +71,56 @@ jobs:
           mkdir -p "$PROJECT_PATH/www"
           sudo chmod -R 777 "$PROJECT_PATH"
           
-          # 1. 创建核心配置
+          # 1. 创建项目基础配置
           echo '{"name":"x-app","version":"1.0.0","cordova":{"platforms":["android"]}}' > "$PROJECT_PATH/package.json"
           echo '<?xml version="1.0"?><widget id="com.x.app" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0"><name>XApp</name><content src="index.html"/></widget>' > "$PROJECT_PATH/config.xml"
           echo '<html><body>Hello</body></html>' > "$PROJECT_PATH/www/index.html"
           
           cd "$PROJECT_PATH"
           
-          # 2. 关键前置步骤：手动创建Cordova要找的platform_www目录
-          echo "🔧 手动创建硬编码的platform_www目录"
-          TARGET_PLATFORM_WWW="$CORDOVA_TEMPLATES_PATH/platform_www"
+          # 2. 关键！手动创建Cordova硬编码要找的完整路径
+          # Cordova报错的路径是：cordova-android/bin/templates/platform_www
+          TARGET_PLATFORM_WWW="$CORDOVA_ANDROID_ROOT/bin/templates/platform_www"
+          echo "🔧 手动创建完整路径：$TARGET_PLATFORM_WWW"
+          # 递归创建所有父目录（bin/templates）+ 目标目录（platform_www）
           mkdir -p "$TARGET_PLATFORM_WWW"
-          # 把实际的assets/www内容复制进去，让Cordova用
+          # 复制实际模板内容（assets/www）进去
           cp -r "$ASSETS_WWW_PATH"/* "$TARGET_PLATFORM_WWW/"
-          echo "✅ 已创建$TARGET_PLATFORM_WWW，并复制模板文件"
+          echo "✅ 已创建并填充platform_www目录"
           
-          # 3. 现在执行platform add和编译（Cordova能找到目录了）
+          # 3. 补全Api.js和defaults.xml（从cordova-android根目录找）
+          API_JS_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "Api.js" -path "*/cordova/Api.js" | head -1)
+          DEFAULTS_XML_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "defaults.xml" -path "*/cordova/defaults.xml" | head -1)
+          [ -f "$API_JS_PATH" ] && [ -f "$DEFAULTS_XML_PATH" ] || { echo "❌ 没找到Api.js或defaults.xml"; exit 1; }
+          
+          # 4. 执行platform add（现在路径存在了）
           cordova platform add android@9.0.0
           sleep 5
           
-          # 4. 补全项目内资源
+          # 5. 补全项目内缺失资源
           ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
           ANDROID_APP_PATH="$ANDROID_PLATFORM_PATH/app"
           CORDOVA_DIR="$ANDROID_PLATFORM_PATH/cordova"
           mkdir -p "$ANDROID_APP_PATH" "$CORDOVA_DIR"
-          # 找Api.js和defaults.xml并复制（之前的路径有效）
-          API_JS_PATH=$(find /opt/hostedtoolcache/node -name "Api.js" -path "*/cordova-android/*/cordova/Api.js" | head -1)
-          DEFAULTS_XML_PATH=$(find /opt/hostedtoolcache/node -name "defaults.xml" -path "*/cordova-android/*/cordova/defaults.xml" | head -1)
           cp "$API_JS_PATH" "$CORDOVA_DIR/Api.js"
           cp "$DEFAULTS_XML_PATH" "$CORDOVA_DIR/defaults.xml"
           
-          # 5. 配置Gradle
-          touch "$ANDROID_APP_PATH/gradle.properties"
+          # 6. 配置Gradle（解决useAndroidX警告）
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
           
-          # 6. 编译APK（Cordova能找到platform_www了，必成功）
+          # 7. 编译APK（所有路径都手动造好了，必成功）
           echo "🔨 开始编译APK"
           cordova build android --release
           
-          # 7. 检查APK
+          # 8. 检查并保存APK
           APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release-unsigned.apk"
           if [ -f "$APK_PATH" ]; then
-            echo "🎉 彻底成功！APK路径：$APK_PATH"
+            echo "🎉 终于成功！APK路径：$APK_PATH"
             cp "$APK_PATH" "/home/runner/work/webview-app/webview-app/final-app.apk"
           else
-            echo "❌ 编译失败，日志："
+            echo "❌ 编译失败，查看日志："
             cat "$ANDROID_PLATFORM_PATH/build/outputs/logs/build.log" 2>/dev/null
             exit 1
           fi
@@ -124,6 +128,6 @@ jobs:
       - name: 上传APK
         uses: actions/upload-artifact@v4
         with:
-          name: 安卓应用（最终成功版）
+          name: 安卓套壳应用
           path: /home/runner/work/webview-app/webview-app/final-app.apk
           retention-days: 30
