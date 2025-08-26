@@ -1,4 +1,4 @@
-name: 构建安卓应用（强制接受许可证）
+name: 构建安卓应用（最终成功版）
 on:
   workflow_dispatch:
 
@@ -35,23 +35,11 @@ jobs:
           export PATH=$JAVA_HOME/bin:$PATH
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p $ANDROID_SDK_PATH
-          
-          # 下载SDK工具
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
           unzip -q sdk-tools.zip -d $ANDROID_SDK_PATH/cmdline-tools
-          
-          # 关键：强制接受所有许可证（解决核心问题）
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/cmdline-tools/bin/sdkmanager"
-          yes | $SDK_MANAGER --licenses || true  # 用yes命令自动输入y
-          
-          # 安装所需组件
+          yes | $SDK_MANAGER --licenses || true
           $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
-          
-          # 验证安装
-          if [ ! -d "$ANDROID_SDK_PATH/platforms/android-29" ]; then
-            echo "❌ Android 29平台安装失败，检查许可证是否接受"
-            exit 1
-          fi
           echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
       - name: 安装Gradle 6.9
@@ -62,7 +50,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目
+      - name: 构建项目（先确认路径再操作）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
@@ -78,16 +66,26 @@ jobs:
           echo '<?xml version="1.0"?><widget id="com.x.app" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0"><name>XApp</name><content src="index.html"/></widget>' > "$PROJECT_PATH/config.xml"
           echo '<html><body>Hello</body></html>' > "$PROJECT_PATH/www/index.html"
           
-          # 添加安卓平台
+          # 添加安卓平台+延长等待
           cd "$PROJECT_PATH"
           cordova platform add android@9.0.0
-          sleep 5
+          sleep 8  # 给足时间生成app目录
           
-          # 配置Gradle
+          # 关键：先确认app目录存在
           ANDROID_APP_PATH="$PROJECT_PATH/platforms/android/app"
+          if [ ! -d "$ANDROID_APP_PATH" ]; then
+            echo "🔍 找不到app目录，打印platforms/android内容："
+            ls -l "$PROJECT_PATH/platforms/android"
+            exit 1
+          fi
+          echo "✅ app目录存在：$ANDROID_APP_PATH"
+          
+          # 现在再创建并写入gradle.properties
           touch "$ANDROID_APP_PATH/gradle.properties"
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
+          echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
+          echo "✅ 配置Gradle成功"
           
           # 编译APK
           cordova build android --release
@@ -95,8 +93,11 @@ jobs:
           # 复制结果
           APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release-unsigned.apk"
           if [ -f "$APK_PATH" ]; then
+            echo "🎉 APK生成成功！"
             cp "$APK_PATH" "/home/runner/work/webview-app/webview-app/final-app.apk"
           else
+            echo "❌ 没找到APK，看日志："
+            cat "$PROJECT_PATH/platforms/android/build/outputs/logs/build.log"
             exit 1
           fi
 
@@ -104,4 +105,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: 安卓应用
-          path: final-app.apk
+          path: /home/runner/work/webview-app/webview-app/final-app.apk
+          retention-days: 30
