@@ -1,4 +1,4 @@
-name: 构建安卓应用（修复Gradle Wrapper缺失，最终成功）
+name: 构建安卓应用（修复语法+Gradle Wrapper，最终版）
 on:
   workflow_dispatch:
 
@@ -24,13 +24,14 @@ jobs:
           CORDOVA_ANDROID_ROOT=$(find /opt/hostedtoolcache/node -type d -name "cordova-android" -path "*/node_modules/cordova-android" | head -1)
           [ -d "$CORDOVA_ANDROID_ROOT" ] || { echo "❌ 没找到cordova-android根目录"; exit 1; }
           
-          # 关键修复：手动创建缺失的wrapper.gradle
+          # 关键修复：手动创建缺失的wrapper.gradle（修复YAML语法：EOF单独成行且无缩进）
           WRAPPER_GRADLE_PATH="$CORDOVA_ANDROID_ROOT/bin/templates/wrapper.gradle"
           echo "🔧 检查并创建wrapper.gradle"
           if [ ! -f "$WRAPPER_GRADLE_PATH" ]; then
             echo "创建缺失的wrapper.gradle"
             mkdir -p "$(dirname "$WRAPPER_GRADLE_PATH")"
-            cat > "$WRAPPER_GRADLE_PATH" << 'EOF'
+            # 修复：用双引号包裹EOF，避免YAML解析冲突
+            cat > "$WRAPPER_GRADLE_PATH" << "EOF"
 task wrapper(type: Wrapper) {
     gradleVersion = '6.5'
     distributionUrl = "https://services.gradle.org/distributions/gradle-6.5-all.zip"
