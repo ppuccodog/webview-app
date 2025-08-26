@@ -1,4 +1,4 @@
-name: 构建安卓应用（补全gradlew，最终成功）
+name: 构建安卓应用（指定模块+根治AndroidX，最终版）
 on:
   workflow_dispatch:
 
@@ -30,20 +30,18 @@ jobs:
           echo -e "// 空任务占位符\n task wrapper {}\n" > "$WRAPPER_GRADLE_PATH"
           [ -f "$WRAPPER_GRADLE_PATH" ] || { echo "❌ wrapper.gradle创建失败"; exit 1; }
           
-          # 记录环境变量
           echo "CORDOVA_ANDROID_ROOT=$CORDOVA_ANDROID_ROOT" >> $GITHUB_ENV
           cordova -v
 
-      - name: 安装JDK8（固定验证）
+      - name: 安装JDK8+安卓SDK+Gradle
         run: |
+          # 安装JDK8
           sudo apt-get update
           sudo apt-get install -y openjdk-8-jdk
           JDK8_PATH="/usr/lib/jvm/java-8-openjdk-amd64"
-          [ -f "$JDK8_PATH/bin/javac" ] && "$JDK8_PATH/bin/java" -version 2>&1 | grep -q "1.8.0" || { echo "❌ JDK8异常"; exit 1; }
+          [ -f "$JDK8_PATH/bin/javac" ] || { echo "❌ JDK8异常"; exit 1; }
           echo "JDK8_PATH=$JDK8_PATH" >> $GITHUB_ENV
 
-      - name: 安装安卓SDK+Gradle（补全工具链）
-        run: |
           # 安装安卓SDK
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p $ANDROID_SDK_PATH
@@ -52,24 +50,22 @@ jobs:
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/cmdline-tools/bin/sdkmanager"
           yes | $SDK_MANAGER --licenses || true
           $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
-          [ -d "$ANDROID_SDK_PATH/platforms/android-29" ] || { echo "❌ SDK缺失"; exit 1; }
-          
-          # 安装Gradle（确保有gradlew生成工具）
+          echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV
+
+          # 安装Gradle
           GRADLE_PATH="$HOME/gradle-6.9"
           wget https://services.gradle.org/distributions/gradle-6.9-bin.zip -O gradle-6.9-bin.zip
           unzip -q gradle-6.9-bin.zip -d $HOME
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
-          
-          # 记录环境变量
-          echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-      - name: 构建项目（补全gradlew）
+      - name: 构建项目（指定app模块编译）
         run: |
-          # 强制环境变量
+          # 强制环境变量（覆盖所有冲突配置）
           export JAVA_HOME=$JDK8_PATH
           export PATH="$JAVA_HOME/bin:$PATH:$ANDROID_SDK_PATH/build-tools/29.0.3:$GRADLE_PATH/bin"
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
+          export ANDROID_HOME=$ANDROID_SDK_PATH
           
           # 项目初始化
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
@@ -77,31 +73,36 @@ jobs:
           mkdir -p "$PROJECT_PATH/www"
           cd "$PROJECT_PATH"
           
-          # 1. 写基础配置
+          # 1. 写基础配置（加入AndroidX禁用配置）
           echo '{"name":"x-app","version":"1.0.0","cordova":{"platforms":["android"]}}' > package.json
-          echo '<?xml version="1.0"?><widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0"><name>YJSCSDH</name><content src="index.html"/></widget>' > config.xml
+          echo '<?xml version="1.0"?><widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+  <name>YJSCSDH</name>
+  <content src="index.html"/>
+  <!-- 强制禁用AndroidX，覆盖所有默认配置 -->
+  <platform name="android">
+    <preference name="AndroidXEnabled" value="false" />
+    <preference name="GradlePluginKotlinEnabled" value="false" />
+  </platform>
+</widget>' > config.xml
           echo '<html><body>Hello</body></html>' > www/index.html
           
-          # 2. 添加安卓平台
-          cordova platform add android@9.0.0 --save
+          # 2. 添加安卓平台（禁用自动AndroidX配置）
+          cordova platform add android@9.0.0 --save --no-AndroidX
           sleep 3
           
-          # 3. 定位安卓项目目录
+          # 3. 定位关键目录
           ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
           ANDROID_APP_PATH="$ANDROID_PLATFORM_PATH/app"
           mkdir -p "$ANDROID_APP_PATH"
           
-          # 4. 关键：手动生成gradlew（解决文件不存在）
-          echo "🔧 生成gradlew可执行文件"
+          # 4. 生成gradlew（根项目）
+          echo "🔧 生成根项目gradlew"
           cd "$ANDROID_PLATFORM_PATH"
-          # 用Gradle命令生成Wrapper脚本
           gradle wrapper --gradle-version 6.5 --distribution-type all
-          # 赋予执行权限
           chmod +x gradlew
-          # 验证gradlew存在
-          [ -f "$ANDROID_PLATFORM_PATH/gradlew" ] || { echo "❌ gradlew生成失败"; exit 1; }
+          [ -f "gradlew" ] || { echo "❌ gradlew生成失败"; exit 1; }
           
-          # 5. 逐行写build.gradle
+          # 5. 写app模块build.gradle（确保assembleRelease任务存在）
           BUILD_GRADLE="$ANDROID_APP_PATH/build.gradle"
           > "$BUILD_GRADLE"
           echo "buildscript {" >> "$BUILD_GRADLE"
@@ -114,24 +115,21 @@ jobs:
           echo "    }" >> "$BUILD_GRADLE"
           echo "}" >> "$BUILD_GRADLE"
           echo "" >> "$BUILD_GRADLE"
-          echo "allprojects {" >> "$BUILD_GRADLE"
-          echo "    repositories {" >> "$BUILD_GRADLE"
-          echo "        mavenCentral()" >> "$BUILD_GRADLE"
-          echo "        jcenter()" >> "$BUILD_GRADLE"
-          echo "    }" >> "$BUILD_GRADLE"
-          echo "}" >> "$BUILD_GRADLE"
-          echo "" >> "$BUILD_GRADLE"
           echo "apply plugin: 'com.android.application'" >> "$BUILD_GRADLE"
           echo "" >> "$BUILD_GRADLE"
           echo "android {" >> "$BUILD_GRADLE"
           echo "    compileSdkVersion 29" >> "$BUILD_GRADLE"
           echo "    buildToolsVersion '29.0.3'" >> "$BUILD_GRADLE"
+          echo "    namespace 'com.my.simpleapp'" >> "$BUILD_GRADLE"  # 修复Gradle 6.x命名空间问题
+          echo "" >> "$BUILD_GRADLE"
           echo "    sourceSets {" >> "$BUILD_GRADLE"
           echo "        main {" >> "$BUILD_GRADLE"
           echo "            java { srcDirs = [\"src/main/java\"] }" >> "$BUILD_GRADLE"
           echo "            assets { srcDirs = [\"src/main/assets\"] }" >> "$BUILD_GRADLE"
+          echo "            manifest { srcFile \"src/main/AndroidManifest.xml\" }" >> "$BUILD_GRADLE"
           echo "        }" >> "$BUILD_GRADLE"
           echo "    }" >> "$BUILD_GRADLE"
+          echo "" >> "$BUILD_GRADLE"
           echo "    defaultConfig {" >> "$BUILD_GRADLE"
           echo "        applicationId \"com.my.simpleapp\"" >> "$BUILD_GRADLE"
           echo "        minSdkVersion 21" >> "$BUILD_GRADLE"
@@ -139,6 +137,7 @@ jobs:
           echo "        versionCode 1" >> "$BUILD_GRADLE"
           echo "        versionName \"1.0.0\"" >> "$BUILD_GRADLE"
           echo "    }" >> "$BUILD_GRADLE"
+          echo "" >> "$BUILD_GRADLE"
           echo "    buildTypes {" >> "$BUILD_GRADLE"
           echo "        release {" >> "$BUILD_GRADLE"
           echo "            minifyEnabled false" >> "$BUILD_GRADLE"
@@ -149,17 +148,41 @@ jobs:
           echo "" >> "$BUILD_GRADLE"
           echo "dependencies {" >> "$BUILD_GRADLE"
           echo "    implementation fileTree(dir: 'libs', include: ['*.jar'])" >> "$BUILD_GRADLE"
-          echo "    implementation 'androidx.appcompat:appcompat:1.0.2'" >> "$BUILD_GRADLE"
-          echo "    implementation project(':CordovaLib')" >> "$BUILD_GRADLE"
+          echo "    implementation project(':CordovaLib')" >> "$BUILD_GRADLE"  # 依赖Cordova核心库
           echo "}" >> "$BUILD_GRADLE"
           
-          # 6. 写gradle.properties（强制关闭AndroidX）
+          # 6. 彻底禁用AndroidX（覆盖所有层级配置）
+          # 根项目gradle.properties
+          echo "android.useAndroidX=false" > "$ANDROID_PLATFORM_PATH/gradle.properties"
+          echo "android.enableJetifier=false" >> "$ANDROID_PLATFORM_PATH/gradle.properties"
+          # app模块gradle.properties（优先级最高）
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
           
-          # 7. 补全关键文件
-          # 补MainActivity.java
+          # 7. 补全CordovaLib依赖（确保项目结构完整）
+          CORDOVA_LIB_PATH="$ANDROID_PLATFORM_PATH/CordovaLib"
+          [ -d "$CORDOVA_LIB_PATH" ] || { echo "❌ CordovaLib缺失"; exit 1; }
+          # 补全CordovaLib的build.gradle（确保依赖正常）
+          CORDOVA_LIB_BUILD="$CORDOVA_LIB_PATH/build.gradle"
+          > "$CORDOVA_LIB_BUILD"
+          echo "apply plugin: 'com.android.library'" >> "$CORDOVA_LIB_BUILD"
+          echo "" >> "$CORDOVA_LIB_BUILD"
+          echo "android {" >> "$CORDOVA_LIB_BUILD"
+          echo "    compileSdkVersion 29" >> "$CORDOVA_LIB_BUILD"
+          echo "    buildToolsVersion '29.0.3'" >> "$CORDOVA_LIB_BUILD"
+          echo "    namespace 'org.apache.cordova'" >> "$CORDOVA_LIB_BUILD"
+          echo "    sourceSets {" >> "$CORDOVA_LIB_BUILD"
+          echo "        main { java { srcDirs = [\"src/main/java\"] } }" >> "$CORDOVA_LIB_BUILD"
+          echo "    }" >> "$CORDOVA_LIB_BUILD"
+          echo "}" >> "$CORDOVA_LIB_BUILD"
+          echo "" >> "$CORDOVA_LIB_BUILD"
+          echo "dependencies {" >> "$CORDOVA_LIB_BUILD"
+          echo "    implementation fileTree(dir: 'libs', include: ['*.jar'])" >> "$CORDOVA_LIB_BUILD"
+          echo "}" >> "$CORDOVA_LIB_BUILD"
+          
+          # 8. 补全关键业务文件
+          # MainActivity.java
           ACTIVITY_DIR="$ANDROID_APP_PATH/src/main/java/com/my/simpleapp"
           mkdir -p "$ACTIVITY_DIR"
           echo "package com.my.simpleapp;" >> "$ACTIVITY_DIR/MainActivity.java"
@@ -173,7 +196,7 @@ jobs:
           echo "    }" >> "$ACTIVITY_DIR/MainActivity.java"
           echo "}" >> "$ACTIVITY_DIR/MainActivity.java"
           
-          # 补strings.xml
+          # strings.xml
           RES_DIR="$ANDROID_APP_PATH/src/main/res/values"
           mkdir -p "$RES_DIR"
           echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" >> "$RES_DIR/strings.xml"
@@ -181,7 +204,7 @@ jobs:
           echo "    <string name=\"app_name\">YJSCSDH</string>" >> "$RES_DIR/strings.xml"
           echo "</resources>" >> "$RES_DIR/strings.xml"
           
-          # 补AndroidManifest.xml
+          # AndroidManifest.xml
           MANIFEST_DIR="$ANDROID_APP_PATH/src/main"
           echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" >> "$MANIFEST_DIR/AndroidManifest.xml"
           echo "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\" package=\"com.my.simpleapp\" android:versionCode=\"1\" android:versionName=\"1.0.0\">" >> "$MANIFEST_DIR/AndroidManifest.xml"
@@ -196,19 +219,20 @@ jobs:
           echo "    </application>" >> "$MANIFEST_DIR/AndroidManifest.xml"
           echo "</manifest>" >> "$MANIFEST_DIR/AndroidManifest.xml"
           
-          # 8. 编译APK（使用生成的gradlew）
-          echo "🔨 开始编译APK"
+          # 9. 关键修复：指定app模块编译assembleRelease
+          echo "🔨 编译app模块的release版本"
           cd "$ANDROID_PLATFORM_PATH"
-          ./gradlew assembleRelease --quiet
+          # 格式：./gradlew :模块名:任务名（app模块才有assembleRelease）
+          ./gradlew :app:assembleRelease --info
           
-          # 9. 检查APK
+          # 10. 检查APK（app模块输出路径）
           APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release.apk"
           if [ -f "$APK_PATH" ]; then
-            echo "🎉 彻底成功！APK路径：$APK_PATH"
+            echo "🎉 终于成功！APK路径：$APK_PATH"
             cp "$APK_PATH" "/home/runner/work/webview-app/webview-app/final-app.apk"
           else
-            echo "❌ 编译失败，日志："
-            cat "$ANDROID_PLATFORM_PATH/build/outputs/logs/build.log"
+            echo "❌ 编译失败，查看app模块日志："
+            cat "$ANDROID_APP_PATH/build/outputs/logs/build.log"
             exit 1
           fi
 
