@@ -1,4 +1,4 @@
-name: 构建安卓应用（手动创建结构，摆脱缓存）
+name: 构建安卓应用（等待生成+先创后写）
 on:
   workflow_dispatch:
 
@@ -14,10 +14,9 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局安装Cordova+清理全局缓存
+      - name: 全局安装Cordova+清理缓存
         run: |
           npm config set registry https://registry.npmjs.org/
-          # 清理npm全局缓存和Cordova模板缓存
           npm cache clean --force
           rm -rf ~/.cordova ~/.npm/_cacache
           npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
@@ -51,23 +50,21 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 手动创建项目+无缓存配置
+      - name: 等待生成+先创后写（解决文件不存在）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
           export GRADLE_HOME=$GRADLE_PATH
           
-          # 1. 彻底清空所有旧文件
+          # 1. 彻底清空旧文件
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           rm -rf "$PROJECT_PATH" "$HOME/work/webview-app/webview-app/node_modules" ~/.cordova
-          mkdir -p "$PROJECT_PATH/www"  # 手动创建www目录（Cordova核心目录）
-          echo "✅ 手动创建项目根目录+www目录"
+          mkdir -p "$PROJECT_PATH/www"
+          echo "✅ 手动创建项目目录"
           
-          # 2. 手动生成Cordova核心配置文件（无模板，无缓存）
-          # package.json：用极特殊名称，绝对不会被当作模块
+          # 2. 手动生成核心配置
           echo '{"name": "x-webview-app-xyz123", "version": "1.0.0", "private": true, "cordova": {"platforms": ["android"]}}' > "$PROJECT_PATH/package.json"
-          # config.xml：明确包名和配置，无旧缓存
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.xyz.webview123" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>XWebviewApp</name>
@@ -76,24 +73,31 @@ jobs:
             <preference name="AndroidXEnabled" value="false" />
             <preference name="android-targetSdkVersion" value="29" />
           </widget>' > "$PROJECT_PATH/config.xml"
-          # www/index.html：默认首页（避免目录空）
           echo '<!DOCTYPE html><html><body>My Webview App</body></html>' > "$PROJECT_PATH/www/index.html"
-          echo "✅ 手动生成所有核心配置文件"
+          echo "✅ 生成核心配置文件"
           
-          # 3. 直接添加安卓平台（不通过cordova create，无模板干扰）
+          # 3. 添加安卓平台+等待5秒（确保文件完全生成）
           cd "$PROJECT_PATH"
           cordova platform add android@9.0.0
-          echo "✅ 安卓平台添加成功"
-          
-          # 4. 强制覆盖platforms/android的gradle.properties（禁用AndroidX）
+          sleep 5  # 延长等待时间，让平台文件同步完成
           ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
+          echo "✅ 安卓平台添加成功，目录：$ANDROID_PLATFORM_PATH"
+          
+          # 4. 关键：先创建gradle.properties文件，再写入内容
+          if [ ! -f "$ANDROID_PLATFORM_PATH/gradle.properties" ]; then
+            touch "$ANDROID_PLATFORM_PATH/gradle.properties"  # 先创建空文件
+            echo "✅ 创建空的gradle.properties"
+          fi
+          # 写入配置（覆盖旧内容）
           echo "android.useAndroidX=false" > "$ANDROID_PLATFORM_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_PLATFORM_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_PLATFORM_PATH/gradle.properties"
+          echo "✅ 写入AndroidX禁用配置"
           
-          # 5. 验证平台目录
-          if [ ! -d "$ANDROID_PLATFORM_PATH" ]; then
-            echo "平台目录缺失"
+          # 5. 验证平台目录（双重保险）
+          if [ ! -d "$ANDROID_PLATFORM_PATH" ] || [ ! -f "$ANDROID_PLATFORM_PATH/build.gradle" ]; then
+            echo "平台目录或文件缺失，当前目录内容："
+            ls -l "$ANDROID_PLATFORM_PATH"
             exit 1
           fi
           
