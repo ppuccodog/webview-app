@@ -1,4 +1,4 @@
-name: 构建安卓应用（解决平台已存在问题）
+name: 构建安卓应用（添加延迟等待文件生成）
 on:
   workflow_dispatch:
 
@@ -46,47 +46,48 @@ jobs:
           echo "GRADLE_HOME=$(pwd)/gradle-6.9" >> $GITHUB_ENV
           echo "$(pwd)/gradle-6.9/bin" >> $GITHUB_PATH
 
-      - name: 创建项目+编译（修复平台已存在问题）
+      - name: 创建项目+编译（添加延迟等待）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           
-          # 1. 创建项目并进入（确保目录干净）
+          # 1. 创建项目并进入
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
-          echo "当前目录：$(pwd)"
           
-          # 2. 关键：先删除可能存在的platforms目录（避免“已添加”错误）
-          if [ -d "platforms" ]; then
-            rm -rf platforms
-            echo "✅ 删除旧的platforms目录"
-          fi
+          # 2. 删除旧platforms目录（确保干净）
+          [ -d "platforms" ] && rm -rf platforms
           
-          # 3. 重新添加安卓平台（让Cordova自动生成完整结构）
+          # 3. 添加安卓平台
           cordova platform add android@9.0.0 --searchpath /opt/hostedtoolcache/node/14.21.3/x64/lib/node_modules/
           
-          # 4. 验证平台目录是否生成（此时结构完整）
+          # 4. 关键：延迟3秒，等待文件写入磁盘（解决“生成提示已出但文件未存在”问题）
+          echo "等待3秒，确保平台文件生成..."
+          sleep 3
+          
+          # 5. 再次验证目录（此时文件已生成）
           if [ -f "platforms/android/build.gradle" ]; then
-            echo "✅ 平台目录生成成功，包含build.gradle"
+            echo "✅ build.gradle文件存在！平台目录完整"
           else
-            echo "❌ 平台目录缺失"
+            echo "❌ 仍缺失，列出目录内容排查："
+            ls -R platforms/android
             exit 1
           fi
           
-          # 5. 复制网页文件
+          # 6. 复制网页文件
           cp -rf ../www/* www/
           cp ../config.txt www/
           
-          # 6. 修复Gradle配置（添加Google仓库+指定JDK）
+          # 7. 修复Gradle配置
           sed -i '/jcenter.bintray.com/a \        maven { url "https://maven.google.com" }\n        maven { url "https://dl.google.com/maven/repo/" }' platforms/android/build.gradle
           echo "org.gradle.java.home=$JDK8_PATH" > platforms/android/gradle.properties
           
-          # 7. 编译APK
+          # 8. 编译APK
           cordova build android --release
           
-          # 8. 检查结果
+          # 9. 检查结果
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 终于成功！APK生成了！"
+            echo "🎉 成功！APK生成了！"
           else
             exit 1
           fi
