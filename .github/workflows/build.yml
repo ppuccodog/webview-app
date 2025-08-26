@@ -1,4 +1,4 @@
-name: 构建安卓套壳应用（完整最终版）
+name: 构建安卓套壳应用（修复版）
 on:
   workflow_dispatch:
 
@@ -338,9 +338,10 @@ jobs:
               exit 1
           fi
 
-      # 步骤4：上传构建产物
+      # 步骤4：上传构建产物（已更新到v4版本）
       - name: 上传APK
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: android-app
           path: /home/runner/work/webview-app/webview-app/myapp/app-release.apk
+    
