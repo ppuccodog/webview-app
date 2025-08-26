@@ -1,4 +1,4 @@
-name: 构建安卓应用（固定JDK8路径，终极成功）
+name: 构建安卓应用（修复仓库依赖，最终成功）
 on:
   workflow_dispatch:
 
@@ -46,22 +46,14 @@ jobs:
           echo "GLOBAL_APP_MANIFEST_DIR=$GLOBAL_APP_MANIFEST_DIR" >> $GITHUB_ENV
           cordova -v
 
-      - name: 安装JDK8（直接用固定路径）
+      - name: 安装JDK8（固定路径）
         run: |
-          # 安装JDK8（不卸载其他，避免依赖冲突）
           sudo apt-get update
           sudo apt-get install -y openjdk-8-jdk
-          # Ubuntu系统JDK8固定路径（从日志和系统默认路径推导）
           JDK8_PATH="/usr/lib/jvm/java-8-openjdk-amd64"
-          # 验证路径存在且是JDK8
-          if [ ! -d "$JDK8_PATH" ]; then
-            echo "❌ JDK8路径不存在，尝试自动查找..."
-            JDK8_PATH=$(find /usr/lib/jvm -name "java-8-openjdk*" | head -1)
-            [ -d "$JDK8_PATH" ] || { echo "❌ 未找到JDK8安装目录"; exit 1; }
-          fi
-          # 验证Java版本（必须是1.8）
-          "$JDK8_PATH/bin/java" -version 2>&1 | grep -q "1.8.0" || { echo "❌ 路径不是JDK8"; "$JDK8_PATH/bin/java" -version; exit 1; }
-          echo "✅ JDK8安装验证通过，路径：$JDK8_PATH"
+          [ -d "$JDK8_PATH" ] || { echo "❌ JDK8路径不存在"; exit 1; }
+          "$JDK8_PATH/bin/java" -version 2>&1 | grep -q "1.8.0" || { echo "❌ 不是JDK8"; exit 1; }
+          echo "✅ JDK8验证通过：$JDK8_PATH"
           echo "JDK8_PATH=$JDK8_PATH" >> $GITHUB_ENV
 
       - name: 安装安卓SDK
@@ -83,16 +75,14 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（强制JDK8）
+      - name: 构建项目（修复仓库依赖）
         run: |
-          # 强制指定JDK8路径，覆盖所有环境变量
+          # 强制JDK8环境
           export JAVA_HOME=$JDK8_PATH
           export PATH="$JAVA_HOME/bin:$PATH"
-          export JRE_HOME="$JAVA_HOME/jre"
-          # 再次验证Java版本（确保编译前环境正确）
-          echo "🔍 验证当前Java版本："
-          java -version 2>&1 | grep -q "1.8.0" || { echo "❌ 未使用JDK8"; java -version; exit 1; }
-          # 配置安卓SDK
+          java -version 2>&1 | grep -q "1.8.0" || { echo "❌ 未使用JDK8"; exit 1; }
+          
+          # 配置安卓环境
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
           export GRADLE_HOME=$GRADLE_PATH
           
@@ -120,38 +110,43 @@ jobs:
           cordova platform add android@9.0.0
           sleep 5
           
-          # 4. 清理项目
+          # 4. 关键修复：添加Maven Central仓库（解决JCenter失效问题）
+          ANDROID_APP_PATH="$PROJECT_PATH/platforms/android/app"
+          BUILD_GRADLE="$ANDROID_APP_PATH/build.gradle"
+          echo "🔧 修复Gradle仓库配置"
+          # 在buildscript的repositories中添加mavenCentral()
+          sed -i '/buildscript {/a \    repositories {\n        mavenCentral()\n        jcenter()\n    }' "$BUILD_GRADLE"
+          # 验证配置
+          grep -q "mavenCentral()" "$BUILD_GRADLE" || { echo "❌ 仓库配置失败"; exit 1; }
+          
+          # 5. 清理项目
           cordova clean android
           
-          # 5. 补全项目内资源
+          # 6. 补全项目内资源
           ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
-          ANDROID_APP_PATH="$ANDROID_PLATFORM_PATH/app"
-          # 5.1 补项目内platform_www
+          # 6.1 补项目内platform_www
           PROJECT_PLATFORM_WWW="$ANDROID_PLATFORM_PATH/platform_www"
           mkdir -p "$PROJECT_PLATFORM_WWW"
           cp -r "$ASSETS_WWW_PATH"/* "$PROJECT_PLATFORM_WWW/"
-          # 5.2 补项目内strings.xml
+          # 6.2 补项目内strings.xml
           PROJECT_APP_RES_DIR="$ANDROID_APP_PATH/src/main/res/values"
           mkdir -p "$PROJECT_APP_RES_DIR"
           cp "$STRINGS_XML_PATH" "$PROJECT_APP_RES_DIR/strings.xml"
-          # 5.3 补项目内AndroidManifest.xml
+          # 6.3 补项目内AndroidManifest.xml
           cp "$MANIFEST_XML_PATH" "$ANDROID_APP_PATH/src/main/AndroidManifest.xml"
           
-          # 6. 创建并验证MainActivity.java
+          # 7. 创建并验证MainActivity.java
           ACTIVITY_DIR="$ANDROID_APP_PATH/src/main/java/com/my/simpleapp"
           mkdir -p "$ACTIVITY_DIR"
           echo -e "package com.my.simpleapp;\n\nimport org.apache.cordova.CordovaActivity;\nimport android.os.Bundle;\n\npublic class MainActivity extends CordovaActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n        loadUrl(launchUrl);\n    }\n}" > "$ACTIVITY_DIR/MainActivity.java"
-          # 验证文件
           [ -f "$ACTIVITY_DIR/MainActivity.java" ] || { echo "❌ Activity文件未创建"; exit 1; }
           grep -q "extends CordovaActivity" "$ACTIVITY_DIR/MainActivity.java" || { echo "❌ Activity继承错误"; exit 1; }
           echo "✅ 项目内Activity验证通过"
           
-          # 7. 配置Gradle源码目录
-          BUILD_GRADLE_PATH="$ANDROID_APP_PATH/build.gradle"
-          cp "$BUILD_GRADLE_PATH" "$BUILD_GRADLE_PATH.bak"
-          sed -i '/android {/a \    sourceSets {\n        main {\n            java {\n                srcDirs = ["src/main/java"]\n            }\n        }\n    }' "$BUILD_GRADLE_PATH"
+          # 8. 配置Gradle源码目录
+          sed -i '/android {/a \    sourceSets {\n        main {\n            java {\n                srcDirs = ["src/main/java"]\n            }\n        }\n    }' "$BUILD_GRADLE"
           
-          # 8. 补Cordova核心配置
+          # 9. 补Cordova核心配置
           API_JS_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "Api.js" -path "*/cordova/Api.js" | head -1)
           DEFAULTS_XML_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "defaults.xml" -path "*/cordova/defaults.xml" | head -1)
           CORDOVA_DIR="$ANDROID_PLATFORM_PATH/cordova"
@@ -159,16 +154,16 @@ jobs:
           cp "$API_JS_PATH" "$CORDOVA_DIR/Api.js"
           cp "$DEFAULTS_XML_PATH" "$CORDOVA_DIR/defaults.xml"
           
-          # 9. 强制Gradle使用JDK8并禁用AndroidX
+          # 10. 配置Gradle属性
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
           
-          # 10. 编译APK
+          # 11. 编译APK
           echo "🔨 开始编译APK"
           cordova build android --release
           
-          # 11. 检查APK
+          # 12. 检查APK
           APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release-unsigned.apk"
           if [ -f "$APK_PATH" ]; then
             echo "🎉 彻底成功！APK路径：$APK_PATH"
@@ -182,6 +177,6 @@ jobs:
       - name: 上传APK
         uses: actions/upload-artifact@v4
         with:
-          name: 安卓套壳应用（最终成功版）
+          name: 安卓套壳应用
           path: /home/runner/work/webview-app/webview-app/final-app.apk
           retention-days: 30
