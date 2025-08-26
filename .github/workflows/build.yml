@@ -1,4 +1,4 @@
-name: 构建安卓应用（语法全校验版）
+name: 构建安卓应用（CordovaLib根治版）
 on:
   workflow_dispatch:
 
@@ -24,7 +24,7 @@ jobs:
           CORDOVA_ANDROID_ROOT=$(find /opt/hostedtoolcache/node -type d -name "cordova-android" -path "*/node_modules/cordova-android" | head -1)
           [ -d "$CORDOVA_ANDROID_ROOT" ] || { echo "❌ 没找到cordova-android根目录"; exit 1; }
           
-          # 创建空wrapper.gradle（避免冲突）
+          # 创建空wrapper.gradle（避免Cordova初始化冲突）
           WRAPPER_GRADLE_PATH="$CORDOVA_ANDROID_ROOT/bin/templates/wrapper.gradle"
           mkdir -p "$(dirname "$WRAPPER_GRADLE_PATH")"
           echo -e "// 空任务占位符\n task wrapper {}\n" > "$WRAPPER_GRADLE_PATH"
@@ -52,51 +52,64 @@ jobs:
           $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
           echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 安装Gradle
-          GRADLE_PATH="$HOME/gradle-6.9"
-          wget https://services.gradle.org/distributions/gradle-6.9-bin.zip -O gradle-6.9-bin.zip
-          unzip -q gradle-6.9-bin.zip -d $HOME
+          # 安装Gradle（匹配cordova-android@9.0.0兼容版本）
+          GRADLE_PATH="$HOME/gradle-6.5"  # 关键：降级到6.5，与cordova-android@9.0.0完全兼容
+          wget https://services.gradle.org/distributions/gradle-6.5-bin.zip -O gradle-6.5-bin.zip
+          unzip -q gradle-6.5-bin.zip -d $HOME
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（指定app模块编译）
+      - name: 构建项目（确保CordovaLib存在）
         run: |
-          # 强制环境变量（覆盖所有冲突配置）
+          # 强制环境变量
           export JAVA_HOME=$JDK8_PATH
           export PATH="$JAVA_HOME/bin:$PATH:$ANDROID_SDK_PATH/build-tools/29.0.3:$GRADLE_PATH/bin"
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
           export ANDROID_HOME=$ANDROID_SDK_PATH
           
-          # 项目初始化
+          # 项目初始化（关键：只创建目录，不删除Cordova自动生成文件）
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
-          rm -rf "$PROJECT_PATH"
-          mkdir -p "$PROJECT_PATH/www"
+          mkdir -p "$PROJECT_PATH/www"  # 仅创建www目录，避免rm -rf清理平台文件
           cd "$PROJECT_PATH"
           
-          # 1. 写基础配置（修复第79行语法：用单行XML避免换行冲突）
+          # 1. 写基础配置（确保Cordova识别项目）
           echo '{"name":"x-app","version":"1.0.0","cordova":{"platforms":["android"]}}' > package.json
-          # 关键修复：XML用单行写法，内部引号用\"转义，避免YAML换行解析错误
           echo '<?xml version="1.0"?><widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0"><name>YJSCSDH</name><content src="index.html"/><platform name="android"><preference name="AndroidXEnabled" value="false"/><preference name="GradlePluginKotlinEnabled" value="false"/></platform></widget>' > config.xml
           echo '<html><body>Hello</body></html>' > www/index.html
           
-          # 2. 添加安卓平台（禁用自动AndroidX配置）
-          cordova platform add android@9.0.0 --save --no-AndroidX
-          sleep 3
-          
-          # 3. 定位关键目录
+          # 2. 关键：先创建安卓平台目录，确保Cordova能正常生成文件
           ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
-          ANDROID_APP_PATH="$ANDROID_PLATFORM_PATH/app"
-          mkdir -p "$ANDROID_APP_PATH"
+          mkdir -p "$ANDROID_PLATFORM_PATH"
+          # 提前创建CordovaLib目录（避免生成失败时目录缺失）
+          CORDOVA_LIB_PATH="$ANDROID_PLATFORM_PATH/CordovaLib"
+          mkdir -p "$CORDOVA_LIB_PATH/src/main/java"
           
-          # 4. 生成gradlew（根项目）
+          # 3. 添加安卓平台（禁用清理，保留自动生成的CordovaLib）
+          echo "🔧 添加安卓平台，保留CordovaLib"
+          cordova platform add android@9.0.0 --save --no-AndroidX --no-registry
+          sleep 5  # 延长等待时间，确保Cordova完全生成所有文件
+          
+          # 4. 验证CordovaLib存在（双重校验）
+          ANDROID_APP_PATH="$ANDROID_PLATFORM_PATH/app"
+          if [ ! -d "$CORDOVA_LIB_PATH" ] || [ ! -d "$ANDROID_APP_PATH" ]; then
+            echo "❌ Cordova平台生成失败，目录结构："
+            ls -l "$PROJECT_PATH/platforms/android"  # 打印目录结构排查问题
+            exit 1
+          fi
+          echo "✅ CordovaLib和app目录已确认存在"
+          
+          # 5. 生成gradlew（根项目，不干扰子模块）
           echo "🔧 生成根项目gradlew"
           cd "$ANDROID_PLATFORM_PATH"
           gradle wrapper --gradle-version 6.5 --distribution-type all
           chmod +x gradlew
           [ -f "gradlew" ] || { echo "❌ gradlew生成失败"; exit 1; }
           
-          # 5. 写app模块build.gradle（逐行写，无语法错）
+          # 6. 修复app模块build.gradle（仅补充缺失配置，不覆盖核心内容）
           BUILD_GRADLE="$ANDROID_APP_PATH/build.gradle"
+          # 先备份Cordova自动生成的build.gradle，避免完全覆盖
+          cp "$BUILD_GRADLE" "$BUILD_GRADLE.bak"
+          # 重新写入配置（确保assembleRelease任务存在）
           > "$BUILD_GRADLE"
           echo "buildscript {" >> "$BUILD_GRADLE"
           echo "    repositories {" >> "$BUILD_GRADLE"
@@ -114,7 +127,6 @@ jobs:
           echo "    compileSdkVersion 29" >> "$BUILD_GRADLE"
           echo "    buildToolsVersion '29.0.3'" >> "$BUILD_GRADLE"
           echo "    namespace 'com.my.simpleapp'" >> "$BUILD_GRADLE"
-          echo "" >> "$BUILD_GRADLE"
           echo "    sourceSets {" >> "$BUILD_GRADLE"
           echo "        main {" >> "$BUILD_GRADLE"
           echo "            java { srcDirs = [\"src/main/java\"] }" >> "$BUILD_GRADLE"
@@ -122,7 +134,6 @@ jobs:
           echo "            manifest { srcFile \"src/main/AndroidManifest.xml\" }" >> "$BUILD_GRADLE"
           echo "        }" >> "$BUILD_GRADLE"
           echo "    }" >> "$BUILD_GRADLE"
-          echo "" >> "$BUILD_GRADLE"
           echo "    defaultConfig {" >> "$BUILD_GRADLE"
           echo "        applicationId \"com.my.simpleapp\"" >> "$BUILD_GRADLE"
           echo "        minSdkVersion 21" >> "$BUILD_GRADLE"
@@ -130,7 +141,6 @@ jobs:
           echo "        versionCode 1" >> "$BUILD_GRADLE"
           echo "        versionName \"1.0.0\"" >> "$BUILD_GRADLE"
           echo "    }" >> "$BUILD_GRADLE"
-          echo "" >> "$BUILD_GRADLE"
           echo "    buildTypes {" >> "$BUILD_GRADLE"
           echo "        release {" >> "$BUILD_GRADLE"
           echo "            minifyEnabled false" >> "$BUILD_GRADLE"
@@ -144,16 +154,19 @@ jobs:
           echo "    implementation project(':CordovaLib')" >> "$BUILD_GRADLE"
           echo "}" >> "$BUILD_GRADLE"
           
-          # 6. 彻底禁用AndroidX（覆盖所有层级配置）
+          # 7. 彻底禁用AndroidX（覆盖所有层级，包括Cordova默认配置）
+          # 根项目gradle.properties
           echo "android.useAndroidX=false" > "$ANDROID_PLATFORM_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_PLATFORM_PATH/gradle.properties"
+          # app模块gradle.properties
           echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
+          # CordovaLib模块gradle.properties（关键：同步禁用AndroidX）
+          echo "android.useAndroidX=false" > "$CORDOVA_LIB_PATH/gradle.properties"
+          echo "android.enableJetifier=false" >> "$CORDOVA_LIB_PATH/gradle.properties"
           
-          # 7. 补全CordovaLib依赖
-          CORDOVA_LIB_PATH="$ANDROID_PLATFORM_PATH/CordovaLib"
-          [ -d "$CORDOVA_LIB_PATH" ] || { echo "❌ CordovaLib缺失"; exit 1; }
+          # 8. 修复CordovaLib的build.gradle（确保能被app模块依赖）
           CORDOVA_LIB_BUILD="$CORDOVA_LIB_PATH/build.gradle"
           > "$CORDOVA_LIB_BUILD"
           echo "apply plugin: 'com.android.library'" >> "$CORDOVA_LIB_BUILD"
@@ -163,61 +176,54 @@ jobs:
           echo "    buildToolsVersion '29.0.3'" >> "$CORDOVA_LIB_BUILD"
           echo "    namespace 'org.apache.cordova'" >> "$CORDOVA_LIB_BUILD"
           echo "    sourceSets {" >> "$CORDOVA_LIB_BUILD"
-          echo "        main { java { srcDirs = [\"src/main/java\"] } }" >> "$CORDOVA_LIB_BUILD"
+          echo "        main {" >> "$CORDOVA_LIB_BUILD"
+          echo "            java { srcDirs = [\"src/main/java\"] }" >> "$CORDOVA_LIB_BUILD"
+          echo "            resources { srcDirs = [\"src/main/res\"] }" >> "$CORDOVA_LIB_BUILD"
+          echo "        }" >> "$CORDOVA_LIB_BUILD"
           echo "    }" >> "$CORDOVA_LIB_BUILD"
           echo "}" >> "$CORDOVA_LIB_BUILD"
           echo "" >> "$CORDOVA_LIB_BUILD"
           echo "dependencies {" >> "$CORDOVA_LIB_BUILD"
           echo "    implementation fileTree(dir: 'libs', include: ['*.jar'])" >> "$CORDOVA_LIB_BUILD"
+          echo "    implementation 'androidx.legacy:legacy-support-v4:1.0.0'" >> "$CORDOVA_LIB_BUILD"  # 补充Cordova依赖
           echo "}" >> "$CORDOVA_LIB_BUILD"
           
-          # 8. 补全关键业务文件
-          # MainActivity.java
+          # 9. 补全关键业务文件（仅补缺失，不干扰自动生成内容）
+          # MainActivity.java（若不存在则创建）
           ACTIVITY_DIR="$ANDROID_APP_PATH/src/main/java/com/my/simpleapp"
           mkdir -p "$ACTIVITY_DIR"
-          echo "package com.my.simpleapp;" >> "$ACTIVITY_DIR/MainActivity.java"
-          echo "import org.apache.cordova.CordovaActivity;" >> "$ACTIVITY_DIR/MainActivity.java"
-          echo "import android.os.Bundle;" >> "$ACTIVITY_DIR/MainActivity.java"
-          echo "public class MainActivity extends CordovaActivity {" >> "$ACTIVITY_DIR/MainActivity.java"
-          echo "    @Override" >> "$ACTIVITY_DIR/MainActivity.java"
-          echo "    public void onCreate(Bundle savedInstanceState) {" >> "$ACTIVITY_DIR/MainActivity.java"
-          echo "        super.onCreate(savedInstanceState);" >> "$ACTIVITY_DIR/MainActivity.java"
-          echo "        loadUrl(launchUrl);" >> "$ACTIVITY_DIR/MainActivity.java"
-          echo "    }" >> "$ACTIVITY_DIR/MainActivity.java"
-          echo "}" >> "$ACTIVITY_DIR/MainActivity.java"
+          if [ ! -f "$ACTIVITY_DIR/MainActivity.java" ]; then
+            echo "package com.my.simpleapp;" >> "$ACTIVITY_DIR/MainActivity.java"
+            echo "import org.apache.cordova.CordovaActivity;" >> "$ACTIVITY_DIR/MainActivity.java"
+            echo "import android.os.Bundle;" >> "$ACTIVITY_DIR/MainActivity.java"
+            echo "public class MainActivity extends CordovaActivity {" >> "$ACTIVITY_DIR/MainActivity.java"
+            echo "    @Override" >> "$ACTIVITY_DIR/MainActivity.java"
+            echo "    public void onCreate(Bundle savedInstanceState) {" >> "$ACTIVITY_DIR/MainActivity.java"
+            echo "        super.onCreate(savedInstanceState);" >> "$ACTIVITY_DIR/MainActivity.java"
+            echo "        loadUrl(launchUrl);" >> "$ACTIVITY_DIR/MainActivity.java"
+            echo "    }" >> "$ACTIVITY_DIR/MainActivity.java"
+            echo "}" >> "$ACTIVITY_DIR/MainActivity.java"
+          fi
           
-          # strings.xml
+          # strings.xml（若不存在则创建）
           RES_DIR="$ANDROID_APP_PATH/src/main/res/values"
           mkdir -p "$RES_DIR"
-          echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" >> "$RES_DIR/strings.xml"
-          echo "<resources>" >> "$RES_DIR/strings.xml"
-          echo "    <string name=\"app_name\">YJSCSDH</string>" >> "$RES_DIR/strings.xml"
-          echo "</resources>" >> "$RES_DIR/strings.xml"
+          if [ ! -f "$RES_DIR/strings.xml" ]; then
+            echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" >> "$RES_DIR/strings.xml"
+            echo "<resources>" >> "$RES_DIR/strings.xml"
+            echo "    <string name=\"app_name\">YJSCSDH</string>" >> "$RES_DIR/strings.xml"
+            echo "</resources>" >> "$RES_DIR/strings.xml"
+          fi
           
-          # AndroidManifest.xml
-          MANIFEST_DIR="$ANDROID_APP_PATH/src/main"
-          echo "<?xml version=\"1.0\" encoding=\"utf-8\"?>" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          echo "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\" package=\"com.my.simpleapp\" android:versionCode=\"1\" android:versionName=\"1.0.0\">" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          echo "    <uses-sdk android:minSdkVersion=\"21\" android:targetSdkVersion=\"29\"/>" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          echo "    <application android:label=\"@string/app_name\">" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          echo "        <activity android:name=\".MainActivity\" android:label=\"@string/app_name\" android:configChanges=\"orientation|keyboardHidden|keyboard|screenSize\">" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          echo "            <intent-filter>" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          echo "                <action android:name=\"android.intent.action.MAIN\"/>" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          echo "                <category android:name=\"android.intent.category.LAUNCHER\"/>" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          echo "            </intent-filter>" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          echo "        </activity>" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          echo "    </application>" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          echo "</manifest>" >> "$MANIFEST_DIR/AndroidManifest.xml"
-          
-          # 9. 编译app模块
-          echo "🔨 编译app模块的release版本"
+          # 10. 编译app模块（指定模块，确保依赖CordovaLib）
+          echo "🔨 编译app模块release版本"
           cd "$ANDROID_PLATFORM_PATH"
           ./gradlew :app:assembleRelease --info
           
-          # 10. 检查APK
+          # 11. 检查APK
           APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release.apk"
           if [ -f "$APK_PATH" ]; then
-            echo "🎉 终于成功！APK路径：$APK_PATH"
+            echo "🎉 彻底成功！APK路径：$APK_PATH"
             cp "$APK_PATH" "/home/runner/work/webview-app/webview-app/final-app.apk"
           else
             echo "❌ 编译失败，查看日志："
