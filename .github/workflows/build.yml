@@ -1,4 +1,4 @@
-name: 构建安卓应用（等待生成+先创后写）
+name: 构建安卓应用（最终版：改对配置路径）
 on:
   workflow_dispatch:
 
@@ -14,7 +14,7 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局安装Cordova+清理缓存
+      - name: 全局安装Cordova+清缓存
         run: |
           npm config set registry https://registry.npmjs.org/
           npm cache clean --force
@@ -29,7 +29,7 @@ jobs:
           echo "JDK8_PATH=/usr/lib/jvm/java-8-openjdk-amd64" >> $GITHUB_ENV
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
 
-      - name: 用JDK 11安装安卓SDK
+      - name: 用JDK 11装安卓SDK
         run: |
           export JAVA_HOME=$JDK11_PATH
           export PATH=$JAVA_HOME/bin:$PATH
@@ -42,7 +42,7 @@ jobs:
           $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
           echo "ANDROID_SDK_PATH=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-      - name: 安装Gradle 6.9
+      - name: 装Gradle 6.9
         run: |
           GRADLE_PATH="$HOME/gradle-6.9"
           wget https://services.gradle.org/distributions/gradle-6.9-bin.zip -O gradle-6.9-bin.zip
@@ -50,20 +50,20 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 等待生成+先创后写（解决文件不存在）
+      - name: 改对路径+一次成功
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
           export GRADLE_HOME=$GRADLE_PATH
           
-          # 1. 彻底清空旧文件
+          # 1. 清空旧文件
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           rm -rf "$PROJECT_PATH" "$HOME/work/webview-app/webview-app/node_modules" ~/.cordova
           mkdir -p "$PROJECT_PATH/www"
-          echo "✅ 手动创建项目目录"
+          echo "✅ 创项目目录"
           
-          # 2. 手动生成核心配置
+          # 2. 写核心配置
           echo '{"name": "x-webview-app-xyz123", "version": "1.0.0", "private": true, "cordova": {"platforms": ["android"]}}' > "$PROJECT_PATH/package.json"
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.xyz.webview123" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
@@ -74,57 +74,43 @@ jobs:
             <preference name="android-targetSdkVersion" value="29" />
           </widget>' > "$PROJECT_PATH/config.xml"
           echo '<!DOCTYPE html><html><body>My Webview App</body></html>' > "$PROJECT_PATH/www/index.html"
-          echo "✅ 生成核心配置文件"
+          echo "✅ 写配置文件"
           
-          # 3. 添加安卓平台+等待5秒（确保文件完全生成）
+          # 3. 加安卓平台+等5秒
           cd "$PROJECT_PATH"
           cordova platform add android@9.0.0
-          sleep 5  # 延长等待时间，让平台文件同步完成
-          ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
-          echo "✅ 安卓平台添加成功，目录：$ANDROID_PLATFORM_PATH"
+          sleep 5
+          # 关键：改对路径！gradle.properties在app目录下
+          ANDROID_APP_PATH="$PROJECT_PATH/platforms/android/app"
+          echo "✅ 平台添加成功，配置路径：$ANDROID_APP_PATH"
           
-          # 4. 关键：先创建gradle.properties文件，再写入内容
-          if [ ! -f "$ANDROID_PLATFORM_PATH/gradle.properties" ]; then
-            touch "$ANDROID_PLATFORM_PATH/gradle.properties"  # 先创建空文件
-            echo "✅ 创建空的gradle.properties"
-          fi
-          # 写入配置（覆盖旧内容）
-          echo "android.useAndroidX=false" > "$ANDROID_PLATFORM_PATH/gradle.properties"
-          echo "android.enableJetifier=false" >> "$ANDROID_PLATFORM_PATH/gradle.properties"
-          echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_PLATFORM_PATH/gradle.properties"
-          echo "✅ 写入AndroidX禁用配置"
+          # 4. 直接写app目录的gradle.properties（肯定存在，不用创建）
+          echo "android.useAndroidX=false" > "$ANDROID_APP_PATH/gradle.properties"
+          echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
+          echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
+          echo "✅ 禁用AndroidX成功！"
           
-          # 5. 验证平台目录（双重保险）
-          if [ ! -d "$ANDROID_PLATFORM_PATH" ] || [ ! -f "$ANDROID_PLATFORM_PATH/build.gradle" ]; then
-            echo "平台目录或文件缺失，当前目录内容："
-            ls -l "$ANDROID_PLATFORM_PATH"
-            exit 1
-          fi
-          
-          # 6. 复制网页文件
+          # 5. 复制网页文件
           if [ -d "/home/runner/work/webview-app/webview-app/www" ]; then
             cp -rf "$_"/* "$PROJECT_PATH/www/"
-            echo "✅ 复制网页文件"
+            echo "✅ 复制网页"
           fi
-          if [ -f "/home/runner/work/webview-app/webview-app/config.txt" ]; then
-            cp "$_" "$PROJECT_PATH/www/"
-            echo "✅ 复制config.txt"
-          fi
+          [ -f "/home/runner/work/webview-app/webview-app/config.txt" ] && cp "$_" "$PROJECT_PATH/www/"
           
-          # 7. 修复Gradle仓库
-          sed -i '/jcenter.bintray.com/a \        maven { url "https://maven.google.com" }\n        maven { url "https://dl.google.com/maven/repo/" }' "$ANDROID_PLATFORM_PATH/build.gradle"
+          # 6. 改Gradle仓库
+          sed -i '/jcenter.bintray.com/a \        maven { url "https://maven.google.com" }\n        maven { url "https://dl.google.com/maven/repo/" }' "$PROJECT_PATH/platforms/android/build.gradle"
           
-          # 8. 编译APK
+          # 7. 编译APK
           cordova build android --release -- --no-parallel
           
-          # 9. 检查APK
-          APK_PATH="$ANDROID_PLATFORM_PATH/app/build/outputs/apk/release/app-release-unsigned.apk"
+          # 8. 检查APK
+          APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release-unsigned.apk"
           if [ -f "$APK_PATH" ]; then
-            echo "🎉 APK生成成功！路径：$APK_PATH"
+            echo "🎉 APK成了！路径：$APK_PATH"
             cp "$APK_PATH" "/home/runner/work/webview-app/webview-app/final-app.apk"
           else
-            echo "❌ 编译失败，日志："
-            cat "$ANDROID_PLATFORM_PATH/build/outputs/logs/build.log"
+            echo "❌ 看日志："
+            cat "$PROJECT_PATH/platforms/android/build/outputs/logs/build.log"
             exit 1
           fi
 
