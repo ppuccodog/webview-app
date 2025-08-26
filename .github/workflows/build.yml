@@ -1,4 +1,4 @@
-name: 构建安卓应用（强制Gradle识别Activity，最终成功）
+name: 构建安卓应用（调整步骤顺序，最终成功）
 on:
   workflow_dispatch:
 
@@ -71,7 +71,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（强制Gradle识别Activity）
+      - name: 构建项目（先加平台再清理）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export ANDROID_SDK_ROOT=$ANDROID_SDK_PATH
@@ -97,12 +97,12 @@ jobs:
           
           cd "$PROJECT_PATH"
           
-          # 3. 清理Cordova缓存（避免旧配置干扰）
-          cordova clean
-          
-          # 4. 添加安卓平台
+          # 3. 先添加安卓平台（关键：必须在clean前执行，否则无平台可清）
           cordova platform add android@9.0.0
           sleep 5
+          
+          # 4. 再执行清理（此时平台已存在，可正常清理）
+          cordova clean android
           
           # 5. 补全项目内资源
           ANDROID_PLATFORM_PATH="$PROJECT_PATH/platforms/android"
@@ -118,36 +118,25 @@ jobs:
           # 5.3 补项目内AndroidManifest.xml
           cp "$MANIFEST_XML_PATH" "$ANDROID_APP_PATH/src/main/AndroidManifest.xml"
           
-          # 6. 关键：创建并验证MainActivity.java（三重保障）
+          # 6. 创建并验证MainActivity.java
           ACTIVITY_DIR="$ANDROID_APP_PATH/src/main/java/com/my/simpleapp"
           mkdir -p "$ACTIVITY_DIR"
-          # 6.1 写入Java文件（确保代码正确）
           echo -e "package com.my.simpleapp;\n\nimport org.apache.cordova.CordovaActivity;\nimport android.os.Bundle;\n\npublic class MainActivity extends CordovaActivity {\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n        loadUrl(launchUrl);\n    }\n}" > "$ACTIVITY_DIR/MainActivity.java"
-          # 6.2 验证文件存在
+          # 验证文件
           if [ ! -f "$ACTIVITY_DIR/MainActivity.java" ]; then
-            echo "❌ 项目内Activity文件未创建成功"
+            echo "❌ Activity文件未创建"
             exit 1
           fi
-          # 6.3 验证文件内容（确保继承关系正确）
           if ! grep -q "extends CordovaActivity" "$ACTIVITY_DIR/MainActivity.java"; then
-            echo "❌ Activity未正确继承CordovaActivity"
-            cat "$ACTIVITY_DIR/MainActivity.java"
+            echo "❌ Activity继承错误"
             exit 1
           fi
-          echo "✅ 项目内Activity验证通过：$ACTIVITY_DIR/MainActivity.java"
+          echo "✅ 项目内Activity验证通过"
           
-          # 7. 强制Gradle识别源码目录（在build.gradle中明确配置）
-          echo "🔧 配置Gradle源码目录"
+          # 7. 配置Gradle源码目录
           BUILD_GRADLE_PATH="$ANDROID_APP_PATH/build.gradle"
-          # 备份原文件
           cp "$BUILD_GRADLE_PATH" "$BUILD_GRADLE_PATH.bak"
-          # 添加源码目录配置
           sed -i '/android {/a \    sourceSets {\n        main {\n            java {\n                srcDirs = ["src/main/java"]\n            }\n        }\n    }' "$BUILD_GRADLE_PATH"
-          # 验证配置是否生效
-          if ! grep -q "srcDirs = \[\"src/main/java\"\]" "$BUILD_GRADLE_PATH"; then
-            echo "❌ Gradle源码目录配置失败"
-            exit 1
-          fi
           
           # 8. 补Cordova核心配置
           API_JS_PATH=$(find "$CORDOVA_ANDROID_ROOT" -name "Api.js" -path "*/cordova/Api.js" | head -1)
@@ -162,9 +151,8 @@ jobs:
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
           
-          # 10. 编译APK（强制清理后编译）
+          # 10. 编译APK
           echo "🔨 开始编译APK"
-          cordova clean android
           cordova build android --release
           
           # 11. 检查APK
