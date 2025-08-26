@@ -1,4 +1,4 @@
-name: 构建安卓应用（宽搜AndroidBuilder.js，最后一步）
+name: 构建安卓应用（用ProjectBuilder.js，终极解决）
 on:
   workflow_dispatch:
 
@@ -14,33 +14,29 @@ jobs:
         with:
           node-version: 14
 
-      - name: 全局装Cordova+宽搜所有核心文件
+      - name: 全局装Cordova+找实际编译文件
         run: |
           npm config set registry https://registry.npmjs.org/
           npm cache clean --force
           npm install -g cordova@10.0.0 cordova-android@9.0.0
-          # 关键：放宽所有文件的搜索条件，不局限子目录
-          echo "🔍 全局宽搜所有核心文件..."
+          # 按实际打印的文件，找ProjectBuilder.js（替代AndroidBuilder.js）
+          echo "🔍 按实际文件结构找核心资源..."
           API_JS_PATH=$(find /opt/hostedtoolcache/node -name "Api.js" -path "*/cordova-android/*/cordova/Api.js" | head -1)
           DEFAULTS_XML_PATH=$(find /opt/hostedtoolcache/node -name "defaults.xml" -path "*/cordova-android/*/cordova/defaults.xml" | head -1)
           ASSETS_WWW_PATH=$(find /opt/hostedtoolcache/node -type d -name "www" -path "*/cordova-android/*/templates/project/assets/www" | head -1)
-          # 放宽AndroidBuilder.js搜索：只要在cordova-android下，不管哪个子目录
-          CORDOVA_BUILDER_PATH=$(find /opt/hostedtoolcache/node -name "AndroidBuilder.js" -path "*/cordova-android/*/AndroidBuilder.js" | head -1)
+          # 关键：用实际存在的ProjectBuilder.js，路径从日志复制
+          CORDOVA_BUILDER_PATH=$(find /opt/hostedtoolcache/node -name "ProjectBuilder.js" -path "*/cordova-android/*/lib/builders/ProjectBuilder.js" | head -1)
           
-          # 找不到时打印所有可能路径，精准定位
-          if [ -z "$API_JS_PATH" ]; then echo "❌ 没找到Api.js"; find /opt/hostedtoolcache/node -name "Api.js" -path "*/cordova-android/*" 2>/dev/null; exit 1; fi
-          if [ -z "$DEFAULTS_XML_PATH" ]; then echo "❌ 没找到defaults.xml"; find /opt/hostedtoolcache/node -name "defaults.xml" -path "*/cordova-android/*" 2>/dev/null; exit 1; fi
-          if [ -z "$ASSETS_WWW_PATH" ]; then echo "❌ 没找到assets/www"; find /opt/hostedtoolcache/node -type d -name "www" -path "*/cordova-android/*" 2>/dev/null; exit 1; fi
-          if [ -z "$CORDOVA_BUILDER_PATH" ]; then 
-            echo "❌ 没找到AndroidBuilder.js，打印cordova-android下所有js文件："; 
-            find /opt/hostedtoolcache/node -name "*.js" -path "*/cordova-android/*" | grep -i "builder" 2>/dev/null; 
-            exit 1; 
-          fi
+          # 验证所有资源
+          [ -f "$API_JS_PATH" ] || { echo "❌ 没找到Api.js"; exit 1; }
+          [ -f "$DEFAULTS_XML_PATH" ] || { echo "❌ 没找到defaults.xml"; exit 1; }
+          [ -d "$ASSETS_WWW_PATH" ] || { echo "❌ 没找到assets/www"; exit 1; }
+          [ -f "$CORDOVA_BUILDER_PATH" ] || { echo "❌ 没找到ProjectBuilder.js"; find /opt/hostedtoolcache/node -name "ProjectBuilder.js" -path "*/cordova-android/*" 2>/dev/null; exit 1; }
           
           echo "✅ 找到Api.js：$API_JS_PATH"
           echo "✅ 找到defaults.xml：$DEFAULTS_XML_PATH"
           echo "✅ 找到assets/www：$ASSETS_WWW_PATH"
-          echo "✅ 找到AndroidBuilder.js：$CORDOVA_BUILDER_PATH"
+          echo "✅ 找到ProjectBuilder.js：$CORDOVA_BUILDER_PATH"
           # 存环境变量
           echo "API_JS_PATH=$API_JS_PATH" >> $GITHUB_ENV
           echo "DEFAULTS_XML_PATH=$DEFAULTS_XML_PATH" >> $GITHUB_ENV
@@ -76,7 +72,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 构建项目（修改配置+编译）
+      - name: 构建项目（修改实际编译文件）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
@@ -108,18 +104,18 @@ jobs:
           cp "$DEFAULTS_XML_PATH" "$CORDOVA_DIR/defaults.xml"
           echo "✅ 补全项目内资源"
           
-          # 4. 修改Cordova配置（替换硬编码路径）
-          echo "🔧 修改AndroidBuilder.js，指向实际assets/www"
-          # 处理路径中的斜杠转义，确保sed替换成功
+          # 4. 关键：修改ProjectBuilder.js，替换硬编码的错误路径
+          echo "🔧 修改ProjectBuilder.js，指向实际assets/www"
+          # 处理路径转义
           ESCAPED_WWW_PATH=$(echo "$ASSETS_WWW_PATH" | sed 's|/|\\/|g')
-          # 替换所有"bin/templates/platform_www"为实际路径
+          # 替换"bin/templates/platform_www"为实际路径（这是报错的根源）
           sed -i "s|bin/templates/platform_www|$ESCAPED_WWW_PATH|g" "$CORDOVA_BUILDER_PATH"
           # 验证修改
           if grep -q "$ASSETS_WWW_PATH" "$CORDOVA_BUILDER_PATH"; then
-            echo "✅ 配置修改成功！现在Cordova会找正确目录"
+            echo "✅ 配置修改成功！Cordova现在会找正确的模板目录"
           else
-            echo "❌ 配置修改失败，查看文件内容："
-            cat "$CORDOVA_BUILDER_PATH" | head -20
+            echo "❌ 配置修改失败，查看文件："
+            cat "$CORDOVA_BUILDER_PATH" | grep -A5 -B5 "bin/templates/platform_www" 2>/dev/null
             exit 1
           fi
           
@@ -129,14 +125,14 @@ jobs:
           echo "android.enableJetifier=false" >> "$ANDROID_APP_PATH/gradle.properties"
           echo "org.gradle.java.home=$JDK8_PATH" >> "$ANDROID_APP_PATH/gradle.properties"
           
-          # 6. 编译APK（所有坑已填，必成功）
+          # 6. 编译APK（所有文件都匹配实际结构，必成功）
           echo "🔨 开始编译APK"
           cordova build android --release
           
           # 7. 检查APK
           APK_PATH="$ANDROID_APP_PATH/build/outputs/apk/release/app-release-unsigned.apk"
           if [ -f "$APK_PATH" ]; then
-            echo "🎉 终于成功！APK生成路径：$APK_PATH"
+            echo "🎉 终于彻底成功！APK路径：$APK_PATH"
             cp "$APK_PATH" "/home/runner/work/webview-app/webview-app/final-app.apk"
           else
             echo "❌ 编译意外失败，日志："
