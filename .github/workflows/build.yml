@@ -1,4 +1,4 @@
-name: 构建安卓应用（极简核心版）
+name: 构建安卓应用（解决平台已存在问题）
 on:
   workflow_dispatch:
 
@@ -9,16 +9,16 @@ jobs:
       - name: 拉取代码
         uses: actions/checkout@v4
 
-      - name: 安装Node.js 14（不启用缓存，避免锁文件问题）
+      - name: 安装Node.js 14
         uses: actions/setup-node@v4
         with:
-          node-version: 14  # 只指定版本，移除cache配置
+          node-version: 14
 
-      - name: 全局安装依赖（直接安装，不额外检查）
+      - name: 全局安装依赖
         run: |
           npm config set registry https://registry.npmjs.org/
           npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
-          cordova -v  # 仅验证Cordova可用
+          cordova -v
 
       - name: 安装JDK 8和11
         run: |
@@ -32,10 +32,8 @@ jobs:
           export JAVA_HOME=$JDK11_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           mkdir -p $HOME/android-sdk
-          # 下载并解压SDK工具
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
           unzip -q sdk-tools.zip -d $HOME/android-sdk/cmdline-tools
-          # 安装必要SDK包
           SDK_MANAGER=$HOME/android-sdk/cmdline-tools/cmdline-tools/bin/sdkmanager
           echo "y" | $SDK_MANAGER --licenses
           $SDK_MANAGER "platforms;android-29" "build-tools;29.0.3" "platform-tools"
@@ -48,35 +46,47 @@ jobs:
           echo "GRADLE_HOME=$(pwd)/gradle-6.9" >> $GITHUB_ENV
           echo "$(pwd)/gradle-6.9/bin" >> $GITHUB_PATH
 
-      - name: 手动创建平台+编译（核心步骤）
+      - name: 创建项目+编译（修复平台已存在问题）
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
           
-          # 1. 创建项目并进入
+          # 1. 创建项目并进入（确保目录干净）
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
+          echo "当前目录：$(pwd)"
           
-          # 2. 手动创建platforms/android（确保目录存在）
-          mkdir -p platforms/android
+          # 2. 关键：先删除可能存在的platforms目录（避免“已添加”错误）
+          if [ -d "platforms" ]; then
+            rm -rf platforms
+            echo "✅ 删除旧的platforms目录"
+          fi
           
-          # 3. 强制添加安卓平台（用本地Node模块路径）
+          # 3. 重新添加安卓平台（让Cordova自动生成完整结构）
           cordova platform add android@9.0.0 --searchpath /opt/hostedtoolcache/node/14.21.3/x64/lib/node_modules/
           
-          # 4. 复制网页文件
+          # 4. 验证平台目录是否生成（此时结构完整）
+          if [ -f "platforms/android/build.gradle" ]; then
+            echo "✅ 平台目录生成成功，包含build.gradle"
+          else
+            echo "❌ 平台目录缺失"
+            exit 1
+          fi
+          
+          # 5. 复制网页文件
           cp -rf ../www/* www/
           cp ../config.txt www/
           
-          # 5. 修复Gradle配置（添加Google仓库+指定JDK）
+          # 6. 修复Gradle配置（添加Google仓库+指定JDK）
           sed -i '/jcenter.bintray.com/a \        maven { url "https://maven.google.com" }\n        maven { url "https://dl.google.com/maven/repo/" }' platforms/android/build.gradle
           echo "org.gradle.java.home=$JDK8_PATH" > platforms/android/gradle.properties
           
-          # 6. 编译APK
+          # 7. 编译APK
           cordova build android --release
           
-          # 7. 检查结果
+          # 8. 检查结果
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 APK生成成功！"
+            echo "🎉 终于成功！APK生成了！"
           else
             exit 1
           fi
