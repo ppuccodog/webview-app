@@ -1,6 +1,6 @@
-name: 构建安卓套壳应用（自动发版到Releases）
+name: 构建安卓套壳应用（修复SDK路径冲突版）
 on:
-  workflow_dispatch:  # 支持手动触发构建
+  workflow_dispatch:
 
 jobs:
   build-android-apk:
@@ -34,7 +34,9 @@ jobs:
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p $ANDROID_SDK_PATH
           echo "✅ 配置唯一SDK路径：$ANDROID_SDK_PATH"
+          # 只设置 ANDROID_HOME（官方推荐，避免与 ANDROID_SDK_ROOT 冲突）
           echo "ANDROID_HOME=$ANDROID_SDK_PATH" >> $GITHUB_ENV
+          # 显式设置 ANDROID_SDK_ROOT 与 ANDROID_HOME 一致（防止工具链自动生成不同值）
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
           # 4. 下载并解压 SDK Tools（新版目录结构）
@@ -91,7 +93,7 @@ jobs:
           echo "ANDROID_SDK_ROOT: $ANDROID_SDK_PATH"
           echo "SDK工具路径存在性：$(ls $ANDROID_SDK_PATH/build-tools/30.0.2/aapt > /dev/null 2>&1 && echo '是' || echo '否')"
 
-      # 步骤3：构建安卓套壳应用（确保SDK路径统一 + 修复编译截断问题）
+      # 步骤3：构建安卓套壳应用（确保SDK路径统一）
       - name: 构建安卓套壳应用
         run: |
           # 强制加载统一的SDK路径（覆盖任何可能的冲突变量）
@@ -209,7 +211,7 @@ jobs:
           }
           EOF
 
-          # 4. 配置App模块（同步AndroidX + 修复注释语法错误）
+          # 4. 配置App模块（同步AndroidX）
           cat > "$APP_DIR/build.gradle" << EOF
           buildscript {
               repositories {
@@ -251,7 +253,7 @@ jobs:
                   }
               }
 
-              // 修复原脚本中#注释语法错误（Gradle用//注释）
+              # 显式指定SDK路径（防止模块级配置读取错误路径）
               sdk.dir = System.getenv("ANDROID_HOME")
           }
 
@@ -372,13 +374,25 @@ jobs:
           org.gradle.configureondemand=true
           EOF
 
-          # 11. 生成Gradle wrapper并编译APK（修复原脚本截断问题，补充完整编译逻辑）
+          # 11. 生成Gradle wrapper并编译APK（指定SDK路径）
           cd "$ANDROID_ROOT" || exit 1
-          # 生成wrapper时显式传递SDK路径
           gradle wrapper --gradle-version 7.0.2
           chmod +x gradlew
-          # 执行Release版APK编译
-          echo "🔨 开始编译Release版APK..."
           ./gradlew :app:assembleRelease --info
 
-          # 验证APK生成结果并复制到
+          # 验证构建结果
+          APK_PATH="$APP_DIR/build/outputs/apk/release/app-release.apk"
+          if [ -f "$APK_PATH" ]; then
+              echo "🎉 APK构建成功: $APK_PATH"
+              cp "$APK_PATH" "$PROJECT_PATH/app-release.apk"
+          else
+              echo "❌ APK构建失败"
+              exit 1
+          fi
+
+      # 步骤4：上传构建产物（已更新到v4版本）
+      - name: 上传APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-app
+          path: /home/runner/work/webview-app/webview-app/myapp/app-release.apk
