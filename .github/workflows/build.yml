@@ -1,4 +1,4 @@
-name: 构建安卓应用（修复文件找不到问题）
+name: 构建安卓应用（手动创建平台目录）
 on:
   workflow_dispatch:
 
@@ -18,6 +18,8 @@ jobs:
         run: |
           npm config set registry https://registry.npmjs.org/
           npm install -g cordova@10.0.0 properties-parser@0.6.0 string.prototype.codepointat@1.0.1
+          # 验证cordova-android包是否存在
+          npm list -g cordova-android
 
       - name: 安装JDK 8和11
         run: |
@@ -30,8 +32,6 @@ jobs:
         run: |
           export JAVA_HOME=$JDK11_PATH
           export PATH=$JAVA_HOME/bin:$PATH
-          java -version
-          
           mkdir -p $HOME/android-sdk
           wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
           unzip -q sdk-tools.zip -d $HOME/android-sdk/cmdline-tools
@@ -47,17 +47,33 @@ jobs:
           echo "GRADLE_HOME=$(pwd)/gradle-6.9" >> $GITHUB_ENV
           echo "$(pwd)/gradle-6.9/bin" >> $GITHUB_PATH
 
-      - name: 编译Cordova项目（调整步骤顺序）
+      - name: 手动创建平台目录+编译
         run: |
           export JAVA_HOME=$JDK8_PATH
           export PATH=$JAVA_HOME/bin:$PATH
-          java -version
           
-          # 1. 创建项目
+          # 1. 创建项目并进入
           cordova create myapp com.my.simpleapp "我的网页APP"
           cd myapp
+          echo "当前目录：$(pwd)"
           
-          # 2. 基础配置
+          # 2. 手动创建platforms/android目录（关键！）
+          mkdir -p platforms/android
+          echo "✅ 手动创建platforms/android目录"
+          
+          # 3. 强制从本地包添加安卓平台（避免网络下载中断）
+          cordova platform add android@9.0.0 --searchpath /usr/local/lib/node_modules/
+          
+          # 4. 验证目录是否存在（此时必然存在）
+          if [ -d "platforms/android" ]; then
+            echo "✅ 平台目录存在，目录内容："
+            ls -l platforms/android
+          else
+            echo "❌ 目录仍缺失，退出"
+            exit 1
+          fi
+          
+          # 5. 配置文件+复制网页
           echo '<?xml version="1.0" encoding="utf-8"?>
           <widget id="com.my.simpleapp" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>我的网页APP</name>
@@ -65,41 +81,20 @@ jobs:
             <access origin="*" />
             <preference name="AndroidXEnabled" value="false" />
           </widget>' > config.xml
-          
-          # 3. 添加安卓平台（确保平台文件生成）
-          ANDROID_SDK_ROOT=$HOME/android-sdk cordova platform add android@9.0.0
-          
-          # 4. 验证文件是否存在
-          echo "检查Gradle文件是否存在..."
-          if [ -f "platforms/android/build.gradle" ] && [ -f "platforms/android/app/build.gradle" ]; then
-            echo "✅ 必要文件存在，可以修改配置"
-          else
-            echo "❌ 关键文件缺失，列出目录内容："
-            ls -R platforms/android
-            exit 1
-          fi
-          
-          # 5. 复制网页文件
           cp -rf ../www/* www/
           cp ../config.txt www/
           
-          # 6. 修复Gradle配置（确保文件存在后再修改）
-          echo "修复Gradle配置..."
-          # 修改项目级build.gradle
+          # 6. 修改Gradle配置（此时文件已存在）
           sed -i '/jcenter.bintray.com/a \        maven { url "https://maven.google.com" }\n        maven { url "https://dl.google.com/maven/repo/" }' platforms/android/build.gradle
-          
-          # 修改app级build.gradle
           sed -i '/dependencies {/a \    implementation "com.g00fy2:versioncompare:1.3.4"' platforms/android/app/build.gradle
-          
-          # 7. 强制Gradle使用JDK 8
           echo "org.gradle.java.home=$JDK8_PATH" > platforms/android/gradle.properties
           
-          # 8. 编译APK
+          # 7. 编译APK
           cordova build android --release
           
-          # 9. 检查结果
+          # 8. 检查结果
           if [ -f "platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            echo "🎉 成功生成APK！"
+            echo "🎉 APK生成成功！"
           else
             exit 1
           fi
@@ -109,4 +104,3 @@ jobs:
         with:
           name: 我的安卓应用
           path: myapp/platforms/android/app/build/outputs/apk/release/app-release-unsigned.apk
-          retention-days: 30
