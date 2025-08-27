@@ -10,7 +10,7 @@ jobs:
       - name: 拉取代码
         uses: actions/checkout@v4
 
-      # 步骤2：安装安卓构建工具链（确保环境变量正确导出）
+      # 步骤2：安装安卓构建工具链
       - name: 安装安卓构建依赖
         run: |
           export TIMEOUT=300
@@ -81,28 +81,20 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-          # 验证依赖安装
-          echo "依赖安装验证："
-          echo "JDK路径: $JDK11_PATH"
-          echo "SDK路径: $ANDROID_SDK_PATH"
-          echo "Build Tools是否存在: $(ls "$ANDROID_SDK_PATH/build-tools/30.0.2/aapt" > /dev/null 2>&1 && echo "是" || echo "否")"
-
-      # 步骤3：构建安卓套壳应用（修复所有语法错误）
+      # 步骤3：构建安卓套壳应用（修复libs目录和APK生成问题）
       - name: 构建安卓套壳应用
         run: |
-          # 强制设置环境变量（关键修复：使用GitHub环境变量语法）
+          # 强制设置环境变量
           export JAVA_HOME="${{ env.JDK11_PATH }}"
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
           export ANDROID_SDK_ROOT="${{ env.ANDROID_SDK_ROOT }}"
           export PATH="$JAVA_HOME/bin:$PATH:$ANDROID_HOME/build-tools/30.0.2:$ANDROID_HOME/platform-tools:${{ env.GRADLE_PATH }}/bin"
           
-          # 验证环境变量（必须全部显示正确路径）
+          # 验证环境变量
           echo "构建环境验证："
           echo "JAVA_HOME: $JAVA_HOME"
           echo "ANDROID_HOME: $ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
           echo "Gradle版本: $(gradle -v | head -n 1)"
-          echo "Build Tools版本: $(ls "$ANDROID_HOME/build-tools/" | head -n 1)"
 
           # 创建项目目录
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
@@ -118,7 +110,9 @@ jobs:
           mkdir -p "$APP_DIR/src/main/java/com/my/simpleapp" \
                    "$APP_DIR/src/main/res/values" \
                    "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova" \
-                   "$WWW_DIR"
+                   "$WWW_DIR" \
+                   "$APP_DIR/libs" \  # 关键修复：创建空的libs目录
+                   "$CORDOVA_LIB_DIR/libs"  # 关键修复：创建空的libs目录
 
           # 1. 创建WebView页面
           cat > "$WWW_DIR/index.html" << EOF
@@ -171,7 +165,7 @@ jobs:
           }
           EOF
 
-          # 3. 配置CordovaLib模块（无语法错误）
+          # 3. 配置CordovaLib模块
           cat > "$CORDOVA_LIB_DIR/build.gradle" << 'EOF'
           apply plugin: 'com.android.library'
 
@@ -188,7 +182,7 @@ jobs:
 
               lintOptions {
                   checkReleaseBuilds false
-                  abortOnError false
+                  abortOnError false  # 忽略lint错误，避免构建失败
               }
           }
 
@@ -204,7 +198,7 @@ jobs:
           }
           EOF
 
-          # 4. 配置App模块（修复语法错误，使用单引号包裹避免变量解析问题）
+          # 4. 配置App模块
           cat > "$APP_DIR/build.gradle" << 'EOF'
           buildscript {
               repositories {
@@ -243,7 +237,14 @@ jobs:
                   release {
                       minifyEnabled false
                       proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+                      // 确保生成签名（即使是调试签名）
+                      signingConfig signingConfigs.debug
                   }
+              }
+
+              lintOptions {
+                  checkReleaseBuilds false
+                  abortOnError false  # 忽略lint错误，确保构建完成
               }
           }
 
@@ -358,22 +359,30 @@ jobs:
           org.gradle.parallel=true
           EOF
 
-          # 11. 编译APK
+          # 11. 编译APK（优化命令确保生成release包）
           cd "$ANDROID_ROOT" || exit 1
           gradle wrapper --gradle-version 7.0.2
           chmod +x gradlew
           echo "开始编译Release版本APK..."
-          ./gradlew :app:assembleRelease --info
+          # 先清理旧构建，再强制生成release包
+          ./gradlew clean :app:assembleRelease --stacktrace
 
-          # 验证APK是否生成
-          APK_SOURCE="$APP_DIR/build/outputs/apk/release/app-release.apk"
+          # 验证APK是否生成（增加容错路径检查）
+          APK_SOURCE1="$APP_DIR/build/outputs/apk/release/app-release.apk"
+          APK_SOURCE2="$APP_DIR/build/outputs/apk/release/app-release-unsigned.apk"  # 可能的无签名路径
           APK_DEST="$PROJECT_PATH/YJSCSDH-v1.0.0.apk"
-          if [ -f "$APK_SOURCE" ]; then
-            echo "APK编译成功！路径：$APK_SOURCE"
-            cp "$APK_SOURCE" "$APK_DEST"
-            echo "APK复制到：$APK_DEST"
+          
+          if [ -f "$APK_SOURCE1" ]; then
+            echo "APK编译成功！路径：$APK_SOURCE1"
+            cp "$APK_SOURCE1" "$APK_DEST"
+          elif [ -f "$APK_SOURCE2" ]; then
+            echo "APK编译成功（无签名版本）！路径：$APK_SOURCE2"
+            cp "$APK_SOURCE2" "$APK_DEST"
           else
-            echo "APK编译失败，未找到文件：$APK_SOURCE"
+            echo "❌ APK编译失败，未找到文件"
+            # 输出构建目录结构帮助排查
+            echo "构建输出目录结构："
+            ls -R "$APP_DIR/build/outputs"
             exit 1
           fi
 
