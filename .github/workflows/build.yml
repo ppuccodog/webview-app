@@ -1,4 +1,4 @@
-name: 安卓套壳应用构建与自动发版（最终修复版）
+name: 安卓套壳应用构建与自动发版
 on:
   workflow_dispatch:  # 手动触发构建
 
@@ -10,31 +10,31 @@ jobs:
       - name: 拉取代码
         uses: actions/checkout@v4
 
-      # 步骤2：安装安卓构建依赖（确保环境变量正确导出）
+      # 步骤2：安装安卓构建依赖
       - name: 安装安卓构建依赖
         run: |
           export TIMEOUT=300
           
-          # 1. 安装JDK 11
+          # 安装JDK 11
           sudo apt-get update -o Acquire::ForceIPv4=true
           sudo apt-get install -y -qq openjdk-11-jdk
           JDK11_PATH="/usr/lib/jvm/java-11-openjdk-amd64"
           echo "JDK11_PATH=$JDK11_PATH" >> $GITHUB_ENV
 
-          # 2. 清理旧SDK变量
+          # 清理旧SDK变量
           unset ANDROID_HOME
           unset ANDROID_SDK_ROOT
           if [ -d "/usr/local/lib/android/sdk" ]; then
             sudo rm -rf /usr/local/lib/android/sdk
           fi
 
-          # 3. 配置SDK路径并导出
+          # 配置SDK路径
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p "$ANDROID_SDK_PATH"
           echo "ANDROID_HOME=$ANDROID_SDK_PATH" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 4. 下载SDK Tools（容错处理）
+          # 下载SDK Tools
           SDK_TOOLS_URL="https://mirrors.tuna.tsinghua.edu.cn/android/repository/commandlinetools-linux-9477386_latest.zip"
           wget --timeout=$TIMEOUT --tries=3 "$SDK_TOOLS_URL" -O sdk-tools.zip || {
             wget --timeout=$TIMEOUT --tries=2 "https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip" -O sdk-tools.zip || exit 1
@@ -44,7 +44,7 @@ jobs:
           mv "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools/"* "$ANDROID_SDK_PATH/cmdline-tools/latest/"
           rm -rf "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools"
 
-          # 5. 配置SDK镜像+接受许可证
+          # 配置SDK镜像+接受许可证
           mkdir -p "$ANDROID_SDK_PATH/.android"
           cat > "$ANDROID_SDK_PATH/.android/repositories.cfg" << EOF
           [main]
@@ -56,7 +56,7 @@ jobs:
           chmod +x "$SDK_MANAGER"
           yes | "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" --licenses || true
           
-          # 6. 安装SDK组件
+          # 安装SDK组件
           "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" \
             "platforms;android-30" "build-tools;30.0.2" "platform-tools" \
             --verbose --no_https || {
@@ -67,7 +67,7 @@ jobs:
                 --verbose --no_https || exit 1
             }
 
-          # 7. 安装Gradle并导出路径（确保后续能调用）
+          # 安装Gradle
           GRADLE_PATH="$HOME/gradle-7.0.2"
           GRADLE_URL="https://mirrors.huaweicloud.com/gradle/gradle-7.0.2-bin.zip"
           if [ ! -d "$GRADLE_PATH" ]; then
@@ -75,56 +75,63 @@ jobs:
             unzip -q gradle-7.0.2-bin.zip -d "$HOME"
           fi
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
-          echo "$GRADLE_PATH/bin" >> $GITHUB_PATH  # 加入系统PATH，确保gradle命令可用
+          echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-          # 8. 验证依赖安装（提前确认关键路径）
-          echo "依赖安装验证："
-          echo "Gradle命令路径: $(which gradle)"
-          echo "Build Tools路径: $ANDROID_SDK_PATH/build-tools/30.0.2"
-
-      # 步骤3：构建安卓套壳应用（修复目录创建顺序+环境变量加载）
+      # 步骤3：构建安卓套壳应用（修复目录层级创建顺序）
       - name: 构建安卓套壳应用
         run: |
-          # 1. 强制加载环境变量（使用绝对路径避免依赖系统PATH）
+          # 1. 强制加载环境变量
           export JAVA_HOME="${{ env.JDK11_PATH }}"
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
           export ANDROID_SDK_ROOT="${{ env.ANDROID_SDK_ROOT }}"
           export GRADLE_PATH="${{ env.GRADLE_PATH }}"
           export PATH="$JAVA_HOME/bin:$PATH:$ANDROID_HOME/build-tools/30.0.2:$ANDROID_HOME/platform-tools:$GRADLE_PATH/bin"
           
-          # 2. 验证环境（确保所有变量非空+命令可用）
+          # 2. 验证环境
           echo "=== 构建环境验证 ==="
           echo "JAVA_HOME: $JAVA_HOME"
           echo "ANDROID_HOME: $ANDROID_HOME"
           echo "GRADLE_PATH: $GRADLE_PATH"
-          echo "Gradle版本: $($GRADLE_PATH/bin/gradle -v | head -n 1)"  # 绝对路径调用，避免命令找不到
+          echo "Gradle版本: $($GRADLE_PATH/bin/gradle -v | head -n 1)"
           echo "Build Tools版本: $(ls "$ANDROID_HOME/build-tools/" | head -n 1)"
 
-          # 3. 创建项目目录（严格按层级创建，避免父目录不存在）
+          # 3. 创建项目根目录
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           rm -rf "$PROJECT_PATH"
           mkdir -p "$PROJECT_PATH"
           cd "$PROJECT_PATH" || exit 1
 
-          # 4. 按层级创建项目结构（先父目录，再子目录）
+          # 4. 按层级创建目录结构（关键修复：从外层到内层逐步创建）
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
           WWW_DIR="$PROJECT_PATH/www"
 
-          # 第一步：创建最外层父目录
+          # 第1层：创建最外层目录
           mkdir -p "$ANDROID_ROOT" "$WWW_DIR"
-          # 第二步：创建模块目录（App和CordovaLib）
+          
+          # 第2层：创建模块目录
           mkdir -p "$APP_DIR" "$CORDOVA_LIB_DIR"
-          # 第三步：创建模块内子目录（确保父目录存在后再创建子目录）
+          
+          # 第3层：创建模块内的main目录
+          mkdir -p "$APP_DIR/src/main" "$CORDOVA_LIB_DIR/src/main"
+          
+          # 第4层：创建java和res目录
+          mkdir -p "$APP_DIR/src/main/java" "$APP_DIR/src/main/res" \
+                   "$CORDOVA_LIB_DIR/src/main/java" "$CORDOVA_LIB_DIR/src/main/res"
+          
+          # 第5层：创建包名目录（解决本次报错的核心步骤）
           mkdir -p "$APP_DIR/src/main/java/com/my/simpleapp" \
-                   "$APP_DIR/src/main/res/values" \
-                   "$APP_DIR/libs" \  # 先创建App的libs目录
                    "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova" \
-                   "$CORDOVA_LIB_DIR/libs"  # 再创建CordovaLib的libs目录
+                   "$APP_DIR/src/main/res/values"
+          
+          # 第6层：创建libs目录
+          mkdir -p "$APP_DIR/libs" "$CORDOVA_LIB_DIR/libs"
+
+          # 验证目录创建结果
           echo "=== 目录创建验证 ==="
-          echo "App libs目录是否存在: $(test -d "$APP_DIR/libs" && echo "是" || echo "否")"
-          echo "CordovaLib libs目录是否存在: $(test -d "$CORDOVA_LIB_DIR/libs" && echo "是" || echo "否")"
+          echo "App代码目录: $(test -d "$APP_DIR/src/main/java/com/my/simpleapp" && echo "存在" || echo "不存在")"
+          echo "CordovaLib代码目录: $(test -d "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova" && echo "存在" || echo "不存在")"
 
           # 5. 编写WebView页面
           cat > "$WWW_DIR/index.html" << EOF
@@ -249,7 +256,7 @@ jobs:
                   release {
                       minifyEnabled false
                       proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-                      signingConfig signingConfigs.debug  # 强制用调试签名生成APK
+                      signingConfig signingConfigs.debug
                   }
               }
 
@@ -370,14 +377,40 @@ jobs:
           org.gradle.parallel=true
           EOF
 
-          # 15. 编译APK（用绝对路径调用gradlew，确保命令可用）
+          # 15. 编译APK
           cd "$ANDROID_ROOT" || exit 1
-          # 生成wrapper（绝对路径调用gradle）
           $GRADLE_PATH/bin/gradle wrapper --gradle-version 7.0.2
           chmod +x gradlew
           echo "=== 开始编译Release APK ==="
-          # 清理旧构建并编译
           ./gradlew clean :app:assembleRelease --info
 
-          # 16. 验证APK生成（检查多个可能路径）
-          APK_SOURCE1="$APP_DIR
+          # 16. 验证APK生成
+          APK_SOURCE1="$APP_DIR/build/outputs/apk/release/app-release.apk"
+          APK_SOURCE2="$APP_DIR/build/outputs/apk/release/app-release-unsigned.apk"
+          APK_DEST="$PROJECT_PATH/YJSCSDH-v1.0.0.apk"
+          
+          if [ -f "$APK_SOURCE1" ]; then
+            echo "APK编译成功！路径：$APK_SOURCE1"
+            cp "$APK_SOURCE1" "$APK_DEST"
+          elif [ -f "$APK_SOURCE2" ]; then
+            echo "APK编译成功（无签名版本）！路径：$APK_SOURCE2"
+            cp "$APK_SOURCE2" "$APK_DEST"
+          else
+            echo "❌ APK编译失败，未找到文件"
+            ls -R "$APP_DIR/build/outputs"
+            exit 1
+          fi
+
+      # 步骤4：发布到GitHub Releases
+      - name: 发布APK到Releases
+        uses: softprops/action-gh-release@v2
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: YJSCSDH 应用 v1.0.0
+          body: |
+            安卓套壳应用自动构建版本
+            - 构建时间：${{ github.event.head_commit.timestamp }}
+            - 基于WebView的套壳应用
+          files: /home/runner/work/webview-app/webview-app/myapp/YJSCSDH-v1.0.0.apk
