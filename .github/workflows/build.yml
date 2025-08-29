@@ -140,9 +140,9 @@ jobs:
           echo "CUSTOM_URL=$CUSTOM_URL" >> $GITHUB_ENV
 
       ########################################################################
-      # 步骤4：处理应用图标（自定义/默认）
+      # 步骤4：处理应用图标（修复默认图标生成错误）
       ########################################################################
-      - name: 处理应用图标
+      - name: 处理应用图标（支持默认图标）
         run: |
           # 创建图标目录
           RES_DIR="/home/runner/work/webview-app/webview-app/myapp/android-project/app/src/main/res"
@@ -157,17 +157,20 @@ jobs:
             ["icon/icon-xxxhdpi.png"]="$RES_DIR/mipmap-xxxhdpi/ic_launcher.png:192x192"
           )
 
-          # 处理图标
+          # 处理图标（修复默认图标生成命令）
           for USER_ICON in "${!ICON_MAP[@]}"; do
             DEST_INFO=${ICON_MAP[$USER_ICON]}
             DEST_PATH=${DEST_INFO%%:*}
             DEST_SIZE=${DEST_INFO#*:}
+            
             if [ -f "$USER_ICON" ]; then
+              # 使用用户提供的图标
               convert "$USER_ICON" -resize "$DEST_SIZE!" "$DEST_PATH"
               echo "✅ 已使用自定义图标：$USER_ICON → $DEST_PATH"
             else
-              # 生成蓝色默认图标
-              convert -size "$DEST_SIZE" xc:#2196F3 -fill white -font Arial -pointsize 16 -gravity center "APP" "$DEST_PATH"
+              # 生成默认图标（修复文本绘制语法）
+              # 使用"label:APP"替代直接写"APP"，避免文件不存在错误
+              convert -size "$DEST_SIZE" xc:#2196F3 -fill white -font Arial -pointsize 16 -gravity center "label:APP" "$DEST_PATH"
               echo "⚠️ 未找到$USER_ICON，生成默认图标 → $DEST_PATH"
             fi
           done
