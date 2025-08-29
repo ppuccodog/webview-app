@@ -1,4 +1,4 @@
-name: 安卓套壳应用构建+自动发版
+name: 安卓浏览器式套壳应用构建+自动发版
 on:
   workflow_dispatch:
 permissions:
@@ -8,42 +8,39 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     steps:
-      # 步骤1：拉取代码
       - name: 拉取代码
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
 
-      # 步骤2：安装安卓构建依赖
       - name: 安装安卓构建依赖
         run: |
           export TIMEOUT=300
           
-          # 1. 安装JDK 11
+          # 安装JDK 11
           sudo apt-get update -o Acquire::ForceIPv4=true
           sudo apt-get install -y -qq openjdk-11-jdk
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
 
-          # 2. 配置Android SDK路径
+          # 配置Android SDK路径
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p "$ANDROID_SDK_PATH"
           echo "ANDROID_HOME=$ANDROID_SDK_PATH" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 3. 下载SDK Tools（优先阿里镜像）
+          # 下载SDK Tools
           SDK_TOOLS_URL="https://mirrors.aliyun.com/android/repository/commandlinetools-linux-9477386_latest.zip"
           if ! wget --timeout=$TIMEOUT --tries=3 "$SDK_TOOLS_URL" -O sdk-tools.zip; then
             SDK_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip"
             wget --timeout=$TIMEOUT --tries=2 "$SDK_TOOLS_URL" -O sdk-tools.zip || exit 1
           fi
-          # 解压SDK Tools
           mkdir -p "$ANDROID_SDK_PATH/cmdline-tools/latest"
           unzip -q sdk-tools.zip -d "$ANDROID_SDK_PATH/cmdline-tools/latest"
           mv "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools/"* "$ANDROID_SDK_PATH/cmdline-tools/latest/" 2>/dev/null || true
           rm -rf "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools"
 
-          # 4. 接受SDK许可证+安装组件
+          # 接受SDK许可证+安装组件
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/latest/bin/sdkmanager"
           chmod +x "$SDK_MANAGER"
           yes | "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" --licenses || true
@@ -51,7 +48,7 @@ jobs:
             "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https || exit 1
           fi
 
-          # 5. 安装Gradle 7.0.2
+          # 安装Gradle 7.0.2
           GRADLE_PATH="$HOME/gradle-7.0.2"
           if [ ! -d "$GRADLE_PATH" ]; then
             GRADLE_URL="https://mirrors.aliyun.com/gradle/gradle-7.0.2-bin.zip"
@@ -64,88 +61,239 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      # 步骤3：构建APK（从config.txt读取网址，打包www目录）
       - name: 构建安卓套壳应用
         run: |
-          # 加载环境变量
           export JAVA_HOME="${{ env.JDK11_PATH }}"
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
           export GRADLE_PATH="${{ env.GRADLE_PATH }}"
           export PATH="$JAVA_HOME/bin:$ANDROID_HOME/build-tools/30.0.2:$ANDROID_HOME/platform-tools:$GRADLE_PATH/bin:$PATH"
 
-          # 1. 读取自定义网址
-          CUSTOM_URL=$(cat config.txt)
-          echo "✅ 从config.txt读取到网址：$CUSTOM_URL"
+          # 读取自定义网址（从config.txt）
+          if [ -f "config.txt" ]; then
+            CUSTOM_URL=$(cat config.txt)
+            echo "✅ 从config.txt读取到网址：$CUSTOM_URL"
+          else
+            # 如果没有config.txt，使用默认网址
+            CUSTOM_URL="https://www.baidu.com"
+            echo "⚠️ 未找到config.txt，使用默认网址：$CUSTOM_URL"
+          fi
 
-          # 2. 创建项目目录
+          # 创建项目目录
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
-          WWW_DIR="$APP_DIR/src/main/assets/www"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
           
           rm -rf "$PROJECT_PATH"
-          mkdir -p "$WWW_DIR"
-          mkdir -p "$APP_DIR/src/main/java/com/my/simpleapp"
+          mkdir -p "$APP_DIR/src/main/java/com/my/browserapp"
           mkdir -p "$APP_DIR/src/main/res/values"
           mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
 
-          # 3. 复制www目录下的所有文件（包含样式）
-          cp -r www/* "$WWW_DIR/"
-          echo "✅ 已将www目录下的所有文件复制到：$WWW_DIR"
-
-          # 4. 编写Java代码（加载自定义网址）
+          # 编写核心Java代码（浏览器功能实现）
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/CordovaActivity.java" << EOF
           package org.apache.cordova;
           import android.app.Activity;
           import android.os.Bundle;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebSettings;
           import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.widget.Toast;
+
           public class CordovaActivity extends Activity {
+              private WebView webView;
+
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  WebView webView = new WebView(this);
-                  webView.loadUrl("$CUSTOM_URL"); // 加载config.txt中的网址
+                  
+                  // 初始化WebView
+                  webView = new WebView(this);
+                  
+                  // 配置WebView以实现浏览器功能
+                  WebSettings webSettings = webView.getSettings();
+                  
+                  // 启用JavaScript支持（大多数网站需要）
+                  webSettings.setJavaScriptEnabled(true);
+                  
+                  // 支持缩放
+                  webSettings.setSupportZoom(true);
+                  webSettings.setBuiltInZoomControls(true);
+                  webSettings.setDisplayZoomControls(false); // 隐藏缩放控件
+                  
+                  // 启用DOM存储API（支持localStorage等）
+                  webSettings.setDomStorageEnabled(true);
+                  
+                  // 支持多种网页特性
+                  webSettings.setAllowFileAccess(true);
+                  webSettings.setAllowContentAccess(true);
+                  webSettings.setAllowFileAccessFromFileURLs(true);
+                  webSettings.setAllowUniversalAccessFromFileURLs(true);
+                  
+                  // 页面自适应屏幕
+                  webSettings.setLoadWithOverviewMode(true);
+                  webSettings.setUseWideViewPort(true);
+                  
+                  // 设置User-Agent，模拟浏览器
+                  webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.101 Mobile Safari/537.36");
+                  
+                  // 关键：设置WebViewClient处理页面跳转，保持在APP内打开
+                  webView.setWebViewClient(new WebViewClient() {
+                      // 所有链接在当前WebView中打开，而不是系统浏览器
+                      @Override
+                      public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                          view.loadUrl(request.getUrl().toString());
+                          return true;
+                      }
+                      
+                      // 页面开始加载时
+                      @Override
+                      public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                          super.onPageStarted(view, url, favicon);
+                          // 可以在这里添加加载进度条
+                      }
+                      
+                      // 页面加载完成时
+                      @Override
+                      public void onPageFinished(WebView view, String url) {
+                          super.onPageFinished(view, url);
+                          // 可以在这里隐藏加载进度条
+                      }
+                      
+                      // 加载错误时
+                      @Override
+                      public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                          super.onReceivedError(view, errorCode, description, failingUrl);
+                          Toast.makeText(CordovaActivity.this, "加载失败: " + description, Toast.LENGTH_LONG).show();
+                          // 显示错误页面
+                          String errorHtml = "<html><body style='background:white;color:black;padding:20px;'>" +
+                                            "<h1>页面加载失败</h1>" +
+                                            "<p>错误代码: " + errorCode + "</p>" +
+                                            "<p>描述: " + description + "</p>" +
+                                            "<p>网址: " + failingUrl + "</p>" +
+                                            "</body></html>";
+                          view.loadData(errorHtml, "text/html", "UTF-8");
+                      }
+                  });
+                  
+                  // 支持JavaScript弹窗
+                  webView.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public boolean onJsAlert(WebView view, String url, String message, android.webkit.JsResult result) {
+                          return super.onJsAlert(view, url, message, result);
+                      }
+                      
+                      @Override
+                      public boolean onJsConfirm(WebView view, String url, String message, android.webkit.JsResult result) {
+                          return super.onJsConfirm(view, url, message, result);
+                      }
+                      
+                      @Override
+                      public boolean onJsPrompt(WebView view, String url, String message, String defaultValue, android.webkit.JsPromptResult result) {
+                          return super.onJsPrompt(view, url, message, defaultValue, result);
+                      }
+                  });
+
+                  // 加载初始网址
+                  webView.loadUrl("$CUSTOM_URL");
                   setContentView(webView);
+              }
+              
+              // 处理返回键，实现网页后退功能
+              @Override
+              public void onBackPressed() {
+                  if (webView.canGoBack()) {
+                      // 如果可以后退，则后退一页
+                      webView.goBack();
+                  } else {
+                      // 否则退出应用
+                      super.onBackPressed();
+                  }
+              }
+              
+              // 暂停网页中的动画和视频
+              @Override
+              protected void onPause() {
+                  super.onPause();
+                  webView.onPause();
+              }
+              
+              // 恢复网页
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  webView.onResume();
+              }
+              
+              // 销毁WebView，释放资源
+              @Override
+              protected void onDestroy() {
+                  if (webView != null) {
+                      webView.destroy();
+                  }
+                  super.onDestroy();
               }
           }
           EOF
 
-          cat > "$APP_DIR/src/main/java/com/my/simpleapp/MainActivity.java" << EOF
-          package com.my.simpleapp;
+          # 主活动代码
+          cat > "$APP_DIR/src/main/java/com/my/browserapp/MainActivity.java" << EOF
+          package com.my.browserapp;
           import org.apache.cordova.CordovaActivity;
           public class MainActivity extends CordovaActivity {}
           EOF
 
-          # 5. 编写Android配置文件
+          # AndroidManifest.xml（浏览器所需权限）
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-                    package="com.my.simpleapp">
+                    package="com.my.browserapp">
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
+              
+              <!-- 浏览器必要权限 -->
               <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+              <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+              
               <application
                   android:label="@string/app_name"
-                  android:theme="@style/AppTheme">
-                  <activity android:name=".MainActivity">
+                  android:theme="@style/AppTheme"
+                  android:hardwareAccelerated="true"
+                  android:usesCleartextTraffic="true">
+                  
+                  <activity 
+                      android:name=".MainActivity"
+                      android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"
+                      android:launchMode="singleTask">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                      <!-- 支持处理网页链接 -->
+                      <intent-filter>
+                          <action android:name="android.intent.action.VIEW"/>
+                          <category android:name="android.intent.category.DEFAULT"/>
+                          <category android:name="android.intent.category.BROWSABLE"/>
+                          <data android:scheme="http"/>
+                          <data android:scheme="https"/>
                       </intent-filter>
                   </activity>
               </application>
           </manifest>
           EOF
 
+          # 字符串资源
           cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
-              <string name="app_name">YJSCSDH</string>
+              <string name="app_name">自定义浏览器</string>
               <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
           </resources>
           EOF
 
-          # 6. 编写gradle.properties（启用AndroidX）
+          # Gradle配置
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
           android.useAndroidX=true
           android.enableJetifier=false
@@ -153,7 +301,6 @@ jobs:
           org.gradle.parallel=true
           EOF
 
-          # 7. 编写Gradle配置
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
           include ':app', ':CordovaLib'
           EOF
@@ -185,7 +332,7 @@ jobs:
           }
           EOF
 
-          # App模块配置（确保assets打包）
+          # App模块配置
           cat > "$APP_DIR/build.gradle" << 'EOF'
           buildscript {
               repositories {
@@ -199,9 +346,9 @@ jobs:
           apply plugin: 'com.android.application'
           android {
               compileSdk 30
-              namespace 'com.my.simpleapp'
+              namespace 'com.my.browserapp'
               defaultConfig {
-                  applicationId "com.my.simpleapp"
+                  applicationId "com.my.browserapp"
                   minSdk 21
                   targetSdk 30
                   versionCode 1
@@ -219,12 +366,6 @@ jobs:
                   maven { url 'https://maven.aliyun.com/repository/google' }
                   maven { url 'https://maven.aliyun.com/repository/public' }
               }
-              // 确保assets目录被打包
-              sourceSets {
-                  main {
-                      assets.srcDirs = ['src/main/assets']
-                  }
-              }
           }
           dependencies {
               implementation project(':CordovaLib')
@@ -232,15 +373,15 @@ jobs:
           }
           EOF
 
-          # 8. 编译APK
+          # 编译APK
           cd "$ANDROID_ROOT" || exit 1
           gradle wrapper --gradle-version 7.0.2
           chmod +x gradlew
           echo "=== 开始编译Release APK ==="
           ./gradlew clean :app:assembleRelease --stacktrace --info
 
-          # 9. 复制APK
-          APK_DEST="/home/runner/work/webview-app/webview-app/YJSCSDH-v1.0.0.apk"
+          # 复制APK
+          APK_DEST="/home/runner/work/webview-app/webview-app/CustomBrowser-v1.0.0.apk"
           if [ -f "$APP_DIR/build/outputs/apk/release/app-release.apk" ]; then
             cp "$APP_DIR/build/outputs/apk/release/app-release.apk" "$APK_DEST"
           elif [ -f "$APP_DIR/build/outputs/apk/release/app-release-unsigned.apk" ]; then
@@ -252,7 +393,6 @@ jobs:
           fi
           echo "✅ APK复制成功，路径：$APK_DEST"
 
-      # 步骤4：创建并推送Git Tag
       - name: 创建并推送Git Tag
         run: |
           git config --global user.name "GitHub Actions"
@@ -264,26 +404,26 @@ jobs:
             git push origin --delete "$TAG_NAME" 2>/dev/null || true
           fi
 
-          git tag -a "$TAG_NAME" -m "YJSCSDH应用v1.0.0"
+          git tag -a "$TAG_NAME" -m "自定义浏览器应用v1.0.0"
           if ! git push origin "$TAG_NAME"; then
             echo "Tag推送失败，重试一次"
             git push origin "$TAG_NAME" || exit 1
           fi
           echo "✅ Tag推送成功：$TAG_NAME"
 
-      # 步骤5：发布到GitHub Releases
       - name: 发布APK到Releases
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: "v1.0.0"
-          name: "YJSCSDH应用v1.0.0"
+          name: "自定义浏览器应用v1.0.0"
           body: |
-            ### 安卓套壳应用自动构建版本
+            ### 安卓自定义浏览器应用
             - 支持系统：Android 5.0+（API 21+）
+            - 功能：访问指定网址并支持页面内跳转
             - 构建时间：${{ github.run_at }}
-            - 应用包名：com.my.simpleapp
-          files: /home/runner/work/webview-app/webview-app/YJSCSDH-v1.0.0.apk
+            - 应用包名：com.my.browserapp
+          files: /home/runner/work/webview-app/webview-app/CustomBrowser-v1.0.0.apk
           draft: false
           prerelease: false
