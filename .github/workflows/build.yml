@@ -144,9 +144,10 @@ jobs:
       ########################################################################
       - name: 处理应用图标（支持默认图标）
         run: |
-          # 创建图标目录
+          # 创建图标目录（包含values目录，用于后续资源文件）
           RES_DIR="/home/runner/work/webview-app/webview-app/myapp/android-project/app/src/main/res"
           mkdir -p "$RES_DIR/mipmap-mdpi" "$RES_DIR/mipmap-hdpi" "$RES_DIR/mipmap-xhdpi" "$RES_DIR/mipmap-xxhdpi" "$RES_DIR/mipmap-xxxhdpi"
+          mkdir -p "$RES_DIR/values"  # 关键：提前创建values目录，用于strings.xml和styles.xml
           
           # 图标映射表（用户图标路径 → 安卓图标路径+尺寸）
           declare -A ICON_MAP=(
@@ -169,7 +170,6 @@ jobs:
               echo "✅ 已使用自定义图标：$USER_ICON → $DEST_PATH"
             else
               # 生成默认图标（修复文本绘制语法）
-              # 使用"label:APP"替代直接写"APP"，避免文件不存在错误
               convert -size "$DEST_SIZE" xc:#2196F3 -fill white -font Arial -pointsize 16 -gravity center "label:APP" "$DEST_PATH"
               echo "⚠️ 未找到$USER_ICON，生成默认图标 → $DEST_PATH"
             fi
@@ -177,7 +177,7 @@ jobs:
           echo "RES_DIR=$RES_DIR" >> $GITHUB_ENV
 
       ########################################################################
-      # 步骤5：生成安卓项目代码
+      # 步骤5：生成安卓项目代码（确保资源目录存在）
       ########################################################################
       - name: 生成安卓项目代码
         run: |
@@ -187,9 +187,12 @@ jobs:
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
           JAVA_DIR="$APP_DIR/src/main/java/$(echo ${{ env.APP_PACKAGE }} | tr '.' '/')"
-          mkdir -p "$JAVA_DIR" "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
+          RES_DIR="${{ env.RES_DIR }}"  # 从图标处理步骤继承RES_DIR路径，确保目录已存在
+          
+          # 创建必要目录（Java代码目录+项目基础目录）
+          mkdir -p "$JAVA_DIR" "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova" "$APP_DIR/src/main/assets/www"
 
-          # 1. 核心WebView代码（CordovaActivity.java）
+          # -------------------------- 1. 核心WebView代码（CordovaActivity.java） --------------------------
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/CordovaActivity.java" << EOF
           package org.apache.cordova;
           import android.app.Activity;
@@ -292,14 +295,14 @@ jobs:
           }
           EOF
 
-          # 2. 主活动代码（MainActivity.java）
+          # -------------------------- 2. 主活动代码（MainActivity.java） --------------------------
           cat > "$JAVA_DIR/MainActivity.java" << EOF
           package ${{ env.APP_PACKAGE }};
           import org.apache.cordova.CordovaActivity;
           public class MainActivity extends CordovaActivity {}
           EOF
 
-          # 3. AndroidManifest.xml（权限配置）
+          # -------------------------- 3. AndroidManifest.xml（权限配置） --------------------------
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -314,7 +317,8 @@ jobs:
                   android:label="@string/app_name"
                   android:theme="@style/AppTheme"
                   android:hardwareAccelerated="true"
-                  android:usesCleartextTraffic="true">
+                  android:usesCleartextTraffic="true"
+                  android:icon="@mipmap/ic_launcher"> <!-- 关联应用图标 -->
                   
                   <activity 
                       android:name=".MainActivity"
@@ -336,7 +340,7 @@ jobs:
           </manifest>
           EOF
 
-          # 4. 字符串资源（应用名称）
+          # -------------------------- 4. 字符串资源（strings.xml） --------------------------
           cat > "$RES_DIR/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
@@ -344,7 +348,7 @@ jobs:
           </resources>
           EOF
 
-          # 5. 样式配置
+          # -------------------------- 5. 样式配置（styles.xml） --------------------------
           cat > "$RES_DIR/values/styles.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
@@ -355,7 +359,7 @@ jobs:
           </resources>
           EOF
 
-          # 6. Gradle配置文件
+          # -------------------------- 6. Gradle配置文件 --------------------------
           # 项目级build.gradle
           cat > "$ANDROID_ROOT/build.gradle" << 'EOF'
           buildscript {
