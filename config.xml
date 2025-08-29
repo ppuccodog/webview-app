@@ -1,31 +1,31 @@
 <?xml version='1.0' encoding='utf-8'?>
-<!-- 核心配置：widget标签的id=包名，version=应用版本 -->
+<!-- 注意：XML标签属性内不能写注释，注释需单独成行或在标签外 -->
 <widget 
-  id="com.ysjyy.csdh"  <!-- 自定义包名（必须唯一，如com.tencent.wechat） -->
-  version="1.0.0"               <!-- 自定义版本号（如1.0.0、2.1.5） -->
+  id="com.ysjyy.csdh"  <!-- 正确：注释在属性行末尾（允许，但建议单独成行更规范） -->
+  version="1.0.0"
   xmlns="http://www.w3.org/ns/widgets" 
   xmlns:cdv="http://cordova.apache.org/ns/1.0">
 
-  <!-- 应用基础信息 -->
-  <name>YJSCSDH</name>       <!-- 自定义应用名称（显示在手机桌面） -->
+  <!-- 应用基础信息（注释单独成行，符合XML语法） -->
+  <name>YSJYY_CSDH</name>  <!-- 应用名称（显示在手机桌面） -->
   <description>
-    这是一个支持自定义网址的浏览器式APP，可加载外部CSS和资源，支持页面跳转。
-  </description>                  <!-- 自定义应用描述 -->
+    这是YSJYY专属的浏览器式APP，支持加载指定网址和外部CSS资源。
+  </description>
   <author 
-    email="ppucco@foxmail.com"  <!-- 开发者邮箱（可选） -->
-    href="http://hs1314.cn"> <!-- 开发者网站（可选） -->
+    email="ppucco@foxmail.com"
+    href="http://www.hs1314.cn">
     开发者名称
   </author>
 
   <!-- 安卓平台专属配置 -->
   <platform name="android">
     <preference name="AndroidXEnabled" value="true" /> <!-- 适配新版安卓（勿删） -->
-    <preference name="LoadUrlTimeoutValue" value="80000" /> <!-- 网页加载超时（毫秒，默认8秒） -->
-    <preference name="WebViewZoom" value="true" /> <!-- 允许网页缩放（true/false） -->
-    <preference name="AllowFileAccess" value="true" /> <!-- 允许访问本地文件（勿删） -->
+    <preference name="LoadUrlTimeoutValue" value="80000" /> <!-- 加载超时（80秒） -->
+    <preference name="WebViewZoom" value="true" /> <!-- 允许网页缩放 -->
+    <preference name="AllowFileAccess" value="true" /> <!-- 允许访问本地文件 -->
   </platform>
 
-  <!-- 权限与访问控制（勿删，确保外部资源加载） -->
+  <!-- 权限控制（确保外部资源加载） -->
   <access origin="*" /> <!-- 允许访问所有网址 -->
   <allow-intent href="http://*/*" /> <!-- 允许HTTP链接 -->
   <allow-intent href="https://*/*" /> <!-- 允许HTTPS链接 -->
