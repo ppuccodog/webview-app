@@ -1,6 +1,9 @@
 name: 安卓套壳应用构建+自动发版
 on:
   workflow_dispatch:
+# 新增：授予推送Tag所需的权限
+permissions:
+  contents: write  # 允许创建和推送标签、修改仓库内容
 
 jobs:
   build-and-release:
@@ -65,7 +68,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      # 步骤3：构建APK（仅新增“创建gradle.properties”步骤，其余不变）
+      # 步骤3：构建APK（已修复AndroidX问题）
       - name: 构建安卓套壳应用
         run: |
           # 加载环境变量（强制覆盖，避免传递为空）
@@ -147,18 +150,16 @@ jobs:
           </resources>
           EOF
 
-          # -------------------------- 新增：创建gradle.properties文件 --------------------------
-          # 启用AndroidX并禁用旧支持库，解决依赖冲突
+          # 新增：创建gradle.properties文件（解决AndroidX依赖问题）
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
           # 启用AndroidX（必须，否则依赖AndroidX库会报错）
           android.useAndroidX=true
-          # 禁用旧支持库向AndroidX的自动迁移（当前项目直接使用AndroidX，无需迁移）
+          # 禁用旧支持库向AndroidX的自动迁移
           android.enableJetifier=false
           # 其他基础配置（避免Gradle内存不足）
           org.gradle.jvmargs=-Xmx1536m
           org.gradle.parallel=true
           EOF
-          # -----------------------------------------------------------------------------------
 
           # 5. 编写Gradle配置（100%语法正确，替换为稳定仓库）
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
