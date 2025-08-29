@@ -441,6 +441,54 @@ jobs:
           org.gradle.jvmargs=-Xmx1536m
           EOF
 
+          # -------------------------- 关键修复：生成Gradle wrapper文件 --------------------------
+          # 创建gradle/wrapper目录
+          mkdir -p "$ANDROID_ROOT/gradle/wrapper"
+          
+          # 生成gradle-wrapper.properties
+          cat > "$ANDROID_ROOT/gradle/wrapper/gradle-wrapper.properties" << EOF
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https://services.gradle.org/distributions/gradle-7.0.2-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
+          
+          # 生成gradlew执行文件（Linux/Mac）
+          cat > "$ANDROID_ROOT/gradlew" << 'EOF'
+          #!/usr/bin/env sh
+          GRADLE_HOME="$(cd "$(dirname "$0")" && pwd)/gradle/wrapper/dists/gradle-7.0.2-bin/38n860s67z6j367w9081p5n5m/gradle-7.0.2"
+          if [ ! -d "$GRADLE_HOME" ]; then
+              echo "Downloading Gradle 7.0.2..."
+              mkdir -p "$(dirname "$GRADLE_HOME")"
+              wget -q https://services.gradle.org/distributions/gradle-7.0.2-bin.zip -O "$GRADLE_HOME.zip"
+              unzip -q "$GRADLE_HOME.zip" -d "$(dirname "$GRADLE_HOME")"
+              rm "$GRADLE_HOME.zip"
+          fi
+          export GRADLE_HOME
+          exec "$GRADLE_HOME/bin/gradle" "$@"
+          EOF
+          
+          # 生成gradlew.bat（Windows，可选）
+          cat > "$ANDROID_ROOT/gradlew.bat" << 'EOF'
+          @if "%DEBUG%" == "" @echo off
+          setlocal
+          set GRADLE_HOME=%~dp0gradle\wrapper\dists\gradle-7.0.2-bin\38n860s67z6j367w9081p5n5m\gradle-7.0.2
+          if not exist "%GRADLE_HOME%" (
+              echo Downloading Gradle 7.0.2...
+              mkdir "%~dp0gradle\wrapper\dists\gradle-7.0.2-bin\38n860s67z6j367w9081p5n5m"
+              powershell -Command "(New-Object Net.WebClient).DownloadFile('https://services.gradle.org/distributions/gradle-7.0.2-bin.zip', '%GRADLE_HOME%.zip')"
+              powershell -Command "Expand-Archive -Path '%GRADLE_HOME%.zip' -DestinationPath '%~dp0gradle\wrapper\dists\gradle-7.0.2-bin\38n860s67z6j367w9081p5n5m'"
+              del "%GRADLE_HOME%.zip"
+          )
+          set PATH=%GRADLE_HOME%\bin;%PATH%
+          gradle %*
+          endlocal
+          EOF
+          
+          # 赋予执行权限
+          chmod +x "$ANDROID_ROOT/gradlew"
+
       ########################################################################
       # 步骤6：编译APK并发布到Releases
       ########################################################################
@@ -449,6 +497,15 @@ jobs:
           export JAVA_HOME="${{ env.JDK11_PATH }}"
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
           cd /home/runner/work/webview-app/webview-app/myapp/android-project || exit 1
+          
+          # 确认gradlew存在并具有执行权限
+          if [ ! -f "./gradlew" ]; then
+            echo "❌ gradlew文件仍然缺失，尝试手动创建"
+            exit 1
+          fi
+          chmod +x ./gradlew  # 再次确保执行权限
+          
+          # 执行编译
           ./gradlew clean :app:assembleRelease --stacktrace --info
 
           # 复制APK到输出目录
