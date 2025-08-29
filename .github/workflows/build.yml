@@ -6,14 +6,14 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     steps:
-      # 步骤1：拉取代码（确保完整历史与凭证）
+      # 步骤1：拉取代码（不变）
       - name: 拉取代码
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
 
-      # 步骤2：安装安卓构建依赖（替换为稳定链接，增加容错）
+      # 步骤2：安装安卓构建依赖（不变）
       - name: 安装安卓构建依赖
         run: |
           export TIMEOUT=300
@@ -65,7 +65,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      # 步骤3：构建APK（强化路径容错，修复Gradle配置）
+      # 步骤3：构建APK（仅新增“创建gradle.properties”步骤，其余不变）
       - name: 构建安卓套壳应用
         run: |
           # 加载环境变量（强制覆盖，避免传递为空）
@@ -146,6 +146,19 @@ jobs:
               <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
           </resources>
           EOF
+
+          # -------------------------- 新增：创建gradle.properties文件 --------------------------
+          # 启用AndroidX并禁用旧支持库，解决依赖冲突
+          cat > "$ANDROID_ROOT/gradle.properties" << EOF
+          # 启用AndroidX（必须，否则依赖AndroidX库会报错）
+          android.useAndroidX=true
+          # 禁用旧支持库向AndroidX的自动迁移（当前项目直接使用AndroidX，无需迁移）
+          android.enableJetifier=false
+          # 其他基础配置（避免Gradle内存不足）
+          org.gradle.jvmargs=-Xmx1536m
+          org.gradle.parallel=true
+          EOF
+          # -----------------------------------------------------------------------------------
 
           # 5. 编写Gradle配置（100%语法正确，替换为稳定仓库）
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
@@ -241,7 +254,7 @@ jobs:
           fi
           echo "✅ APK复制成功，路径：$APK_DEST"
 
-      # 步骤4：创建并推送Git Tag（增加权限校验）
+      # 步骤4：创建并推送Git Tag（不变）
       - name: 创建并推送Git Tag
         run: |
           # 配置Git用户
@@ -263,7 +276,7 @@ jobs:
           fi
           echo "✅ Tag推送成功：$TAG_NAME"
 
-      # 步骤5：发布到GitHub Releases（确保Tag关联正确）
+      # 步骤5：发布到GitHub Releases（不变）
       - name: 发布APK到Releases
         uses: softprops/action-gh-release@v2
         env:
