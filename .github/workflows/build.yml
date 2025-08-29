@@ -1,27 +1,26 @@
 name: 安卓套壳应用构建+自动发版
 on:
   workflow_dispatch:
-# 新增：授予推送Tag所需的权限
 permissions:
-  contents: write  # 允许创建和推送标签、修改仓库内容
+  contents: write
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
     steps:
-      # 步骤1：拉取代码（不变）
+      # 步骤1：拉取代码
       - name: 拉取代码
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
 
-      # 步骤2：安装安卓构建依赖（不变）
+      # 步骤2：安装安卓构建依赖
       - name: 安装安卓构建依赖
         run: |
           export TIMEOUT=300
           
-          # 1. 安装JDK 11（ubuntu官方源，稳定无依赖）
+          # 1. 安装JDK 11
           sudo apt-get update -o Acquire::ForceIPv4=true
           sudo apt-get install -y -qq openjdk-11-jdk
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
@@ -32,30 +31,27 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_SDK_PATH" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 3. 下载SDK Tools（优先用阿里镜像，备选官方，解决404问题）
+          # 3. 下载SDK Tools（优先阿里镜像）
           SDK_TOOLS_URL="https://mirrors.aliyun.com/android/repository/commandlinetools-linux-9477386_latest.zip"
           if ! wget --timeout=$TIMEOUT --tries=3 "$SDK_TOOLS_URL" -O sdk-tools.zip; then
-            echo "阿里镜像失败，切换官方源"
             SDK_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip"
             wget --timeout=$TIMEOUT --tries=2 "$SDK_TOOLS_URL" -O sdk-tools.zip || exit 1
           fi
-          # 解压SDK Tools（确保目录结构正确）
+          # 解压SDK Tools
           mkdir -p "$ANDROID_SDK_PATH/cmdline-tools/latest"
           unzip -q sdk-tools.zip -d "$ANDROID_SDK_PATH/cmdline-tools/latest"
           mv "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools/"* "$ANDROID_SDK_PATH/cmdline-tools/latest/" 2>/dev/null || true
           rm -rf "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools"
 
-          # 4. 接受SDK许可证+安装组件（增加重试逻辑）
+          # 4. 接受SDK许可证+安装组件
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/latest/bin/sdkmanager"
           chmod +x "$SDK_MANAGER"
           yes | "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" --licenses || true
-          # 安装SDK组件（忽略https证书错误，避免镜像SSL问题）
           if ! "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https; then
-            echo "组件安装失败，重试一次"
             "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https || exit 1
           fi
 
-          # 5. 安装Gradle 7.0.2（替换为阿里镜像，解决华为镜像异常）
+          # 5. 安装Gradle 7.0.2
           GRADLE_PATH="$HOME/gradle-7.0.2"
           if [ ! -d "$GRADLE_PATH" ]; then
             GRADLE_URL="https://mirrors.aliyun.com/gradle/gradle-7.0.2-bin.zip"
@@ -68,20 +64,20 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      # 步骤3：构建APK（已修复AndroidX问题）
+      # 步骤3：构建APK
       - name: 构建安卓套壳应用
         run: |
-          # 加载环境变量（强制覆盖，避免传递为空）
+          # 加载环境变量
           export JAVA_HOME="${{ env.JDK11_PATH }}"
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
           export GRADLE_PATH="${{ env.GRADLE_PATH }}"
           export PATH="$JAVA_HOME/bin:$ANDROID_HOME/build-tools/30.0.2:$ANDROID_HOME/platform-tools:$GRADLE_PATH/bin:$PATH"
 
-          # 1. 创建项目目录（逐层创建，避免路径不存在）
+          # 1. 创建项目目录
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
-          WWW_DIR="$PROJECT_PATH/www"
+          WWW_DIR="$APP_DIR/src/main/assets/www"  # 关键：assets目录下的www
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
           
           rm -rf "$PROJECT_PATH"
@@ -90,7 +86,7 @@ jobs:
           mkdir -p "$APP_DIR/src/main/res/values"
           mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
 
-          # 2. 编写WebView页面（简化内容，避免语法错误）
+          # 2. 编写WebView页面（放在assets/www下）
           cat > "$WWW_DIR/index.html" << EOF
           <!DOCTYPE html>
           <html>
@@ -99,7 +95,7 @@ jobs:
           </html>
           EOF
 
-          # 3. 编写Java代码（简化逻辑，确保编译通过）
+          # 3. 编写Java代码
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/CordovaActivity.java" << EOF
           package org.apache.cordova;
           import android.app.Activity;
@@ -122,7 +118,7 @@ jobs:
           public class MainActivity extends CordovaActivity {}
           EOF
 
-          # 4. 编写Android配置文件（修正命名空间，避免警告）
+          # 4. 编写Android配置文件
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -150,23 +146,20 @@ jobs:
           </resources>
           EOF
 
-          # 新增：创建gradle.properties文件（解决AndroidX依赖问题）
+          # 5. 编写gradle.properties（启用AndroidX）
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
-          # 启用AndroidX（必须，否则依赖AndroidX库会报错）
           android.useAndroidX=true
-          # 禁用旧支持库向AndroidX的自动迁移
           android.enableJetifier=false
-          # 其他基础配置（避免Gradle内存不足）
           org.gradle.jvmargs=-Xmx1536m
           org.gradle.parallel=true
           EOF
 
-          # 5. 编写Gradle配置（100%语法正确，替换为稳定仓库）
+          # 6. 编写Gradle配置
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
           include ':app', ':CordovaLib'
           EOF
 
-          # CordovaLib模块配置（阿里仓库优先，避免超时）
+          # CordovaLib模块配置
           cat > "$CORDOVA_LIB_DIR/build.gradle" << 'EOF'
           buildscript {
               repositories {
@@ -193,7 +186,7 @@ jobs:
           }
           EOF
 
-          # App模块配置（修正signingConfig，避免无签名问题）
+          # App模块配置（关键：添加assets打包配置）
           cat > "$APP_DIR/build.gradle" << 'EOF'
           buildscript {
               repositories {
@@ -227,6 +220,12 @@ jobs:
                   maven { url 'https://maven.aliyun.com/repository/google' }
                   maven { url 'https://maven.aliyun.com/repository/public' }
               }
+              // 确保assets目录被打包
+              sourceSets {
+                  main {
+                      assets.srcDirs = ['src/main/assets']
+                  }
+              }
           }
           dependencies {
               implementation project(':CordovaLib')
@@ -234,16 +233,15 @@ jobs:
           }
           EOF
 
-          # 6. 编译APK（增加日志输出，便于排查）
+          # 7. 编译APK
           cd "$ANDROID_ROOT" || exit 1
           gradle wrapper --gradle-version 7.0.2
           chmod +x gradlew
           echo "=== 开始编译Release APK ==="
           ./gradlew clean :app:assembleRelease --stacktrace --info
 
-          # 7. 复制APK（强化路径容错，支持有/无签名版本）
+          # 8. 复制APK
           APK_DEST="/home/runner/work/webview-app/webview-app/YJSCSDH-v1.0.0.apk"
-          # 检查所有可能的APK路径
           if [ -f "$APP_DIR/build/outputs/apk/release/app-release.apk" ]; then
             cp "$APP_DIR/build/outputs/apk/release/app-release.apk" "$APK_DEST"
           elif [ -f "$APP_DIR/build/outputs/apk/release/app-release-unsigned.apk" ]; then
@@ -255,21 +253,18 @@ jobs:
           fi
           echo "✅ APK复制成功，路径：$APK_DEST"
 
-      # 步骤4：创建并推送Git Tag（不变）
+      # 步骤4：创建并推送Git Tag
       - name: 创建并推送Git Tag
         run: |
-          # 配置Git用户
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           TAG_NAME="v1.0.0"
 
-          # 清理旧Tag（避免冲突）
           if git rev-parse --verify --quiet "$TAG_NAME"; then
             git tag -d "$TAG_NAME"
             git push origin --delete "$TAG_NAME" 2>/dev/null || true
           fi
 
-          # 推送新Tag（增加重试逻辑）
           git tag -a "$TAG_NAME" -m "YJSCSDH应用v1.0.0"
           if ! git push origin "$TAG_NAME"; then
             echo "Tag推送失败，重试一次"
@@ -277,7 +272,7 @@ jobs:
           fi
           echo "✅ Tag推送成功：$TAG_NAME"
 
-      # 步骤5：发布到GitHub Releases（不变）
+      # 步骤5：发布到GitHub Releases
       - name: 发布APK到Releases
         uses: softprops/action-gh-release@v2
         env:
