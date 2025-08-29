@@ -64,7 +64,7 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      # 步骤3：构建APK
+      # 步骤3：构建APK（从config.txt读取网址，打包www目录）
       - name: 构建安卓套壳应用
         run: |
           # 加载环境变量
@@ -73,11 +73,15 @@ jobs:
           export GRADLE_PATH="${{ env.GRADLE_PATH }}"
           export PATH="$JAVA_HOME/bin:$ANDROID_HOME/build-tools/30.0.2:$ANDROID_HOME/platform-tools:$GRADLE_PATH/bin:$PATH"
 
-          # 1. 创建项目目录
+          # 1. 读取自定义网址
+          CUSTOM_URL=$(cat config.txt)
+          echo "✅ 从config.txt读取到网址：$CUSTOM_URL"
+
+          # 2. 创建项目目录
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
-          WWW_DIR="$APP_DIR/src/main/assets/www"  # 关键：assets目录下的www
+          WWW_DIR="$APP_DIR/src/main/assets/www"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
           
           rm -rf "$PROJECT_PATH"
@@ -86,16 +90,11 @@ jobs:
           mkdir -p "$APP_DIR/src/main/res/values"
           mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
 
-          # 2. 编写WebView页面（放在assets/www下）
-          cat > "$WWW_DIR/index.html" << EOF
-          <!DOCTYPE html>
-          <html>
-          <head><meta charset="UTF-8"><title>YJSCSDH套壳应用</title></head>
-          <body><h1>构建成功！</h1></body>
-          </html>
-          EOF
+          # 3. 复制www目录下的所有文件（包含样式）
+          cp -r www/* "$WWW_DIR/"
+          echo "✅ 已将www目录下的所有文件复制到：$WWW_DIR"
 
-          # 3. 编写Java代码
+          # 4. 编写Java代码（加载自定义网址）
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/CordovaActivity.java" << EOF
           package org.apache.cordova;
           import android.app.Activity;
@@ -106,7 +105,7 @@ jobs:
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   WebView webView = new WebView(this);
-                  webView.loadUrl("file:///android_asset/www/index.html");
+                  webView.loadUrl("$CUSTOM_URL"); // 加载config.txt中的网址
                   setContentView(webView);
               }
           }
@@ -118,7 +117,7 @@ jobs:
           public class MainActivity extends CordovaActivity {}
           EOF
 
-          # 4. 编写Android配置文件
+          # 5. 编写Android配置文件
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -146,7 +145,7 @@ jobs:
           </resources>
           EOF
 
-          # 5. 编写gradle.properties（启用AndroidX）
+          # 6. 编写gradle.properties（启用AndroidX）
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
           android.useAndroidX=true
           android.enableJetifier=false
@@ -154,7 +153,7 @@ jobs:
           org.gradle.parallel=true
           EOF
 
-          # 6. 编写Gradle配置
+          # 7. 编写Gradle配置
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
           include ':app', ':CordovaLib'
           EOF
@@ -186,7 +185,7 @@ jobs:
           }
           EOF
 
-          # App模块配置（关键：添加assets打包配置）
+          # App模块配置（确保assets打包）
           cat > "$APP_DIR/build.gradle" << 'EOF'
           buildscript {
               repositories {
@@ -233,14 +232,14 @@ jobs:
           }
           EOF
 
-          # 7. 编译APK
+          # 8. 编译APK
           cd "$ANDROID_ROOT" || exit 1
           gradle wrapper --gradle-version 7.0.2
           chmod +x gradlew
           echo "=== 开始编译Release APK ==="
           ./gradlew clean :app:assembleRelease --stacktrace --info
 
-          # 8. 复制APK
+          # 9. 复制APK
           APK_DEST="/home/runner/work/webview-app/webview-app/YJSCSDH-v1.0.0.apk"
           if [ -f "$APP_DIR/build/outputs/apk/release/app-release.apk" ]; then
             cp "$APP_DIR/build/outputs/apk/release/app-release.apk" "$APK_DEST"
