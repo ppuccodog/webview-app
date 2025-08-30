@@ -463,7 +463,7 @@ jobs:
           echo -e "\n📄 生成的Gradle配置文件列表："
           find "$PROJECT_ROOT" -name "*.gradle" -o -name "settings.gradle" -o -name "gradle.properties" -o -name "proguard-rules.pro"
       ########################################################################
-      # 步骤7：生成项目核心代码（修正CordovaLib Manifest XML语法）
+      # 步骤7：生成项目核心代码（添加默认应用图标资源）
       ########################################################################
       - name: 生成项目核心代码
         run: |
@@ -587,13 +587,11 @@ jobs:
           EOF
           [ -f "$APP_MANIFEST_FILE" ] && echo "✅ 生成app模块AndroidManifest.xml" || exit 1
 
-          # 3. 生成CordovaLib模块的AndroidManifest.xml（修正XML语法）
+          # 3. 生成CordovaLib模块的AndroidManifest.xml（语法已修正）
           CORDOVALIB_MANIFEST_DIR="${{ env.PROJECT_ROOT }}/CordovaLib/src/main"
-          # 先创建CordovaLib的Manifest目录（确保目录存在）
           mkdir -p "$CORDOVALIB_MANIFEST_DIR" || { echo "❌ 创建CordovaLib目录失败"; exit 1; }
           CORDOVALIB_MANIFEST_FILE="$CORDOVALIB_MANIFEST_DIR/AndroidManifest.xml"
           
-          # 核心修正：确保manifest标签属性完整、引号闭合、无多余空格
           cat > "$CORDOVALIB_MANIFEST_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -601,12 +599,10 @@ jobs:
               android:versionCode="1"
               android:versionName="1.0">
 
-              <!-- 声明SDK版本（与app模块一致） -->
               <uses-sdk
                   android:minSdkVersion="21"
                   android:targetSdkVersion="30" />
 
-              <!-- 库模块无需额外配置，仅保留基础application标签 -->
               <application
                   android:allowBackup="true"
                   android:supportsRtl="true" />
@@ -614,17 +610,58 @@ jobs:
           </manifest>
           EOF
           
-          # 验证文件生成结果
           if [ -f "$CORDOVALIB_MANIFEST_FILE" ] && [ -s "$CORDOVALIB_MANIFEST_FILE" ]; then
-            echo "✅ 生成CordovaLib模块AndroidManifest.xml（语法已修正）"
-            # 输出文件内容供调试（可选，确认语法正确性）
-            echo "📄 CordovaLib Manifest内容："
-            cat "$CORDOVALIB_MANIFEST_FILE"
+            echo "✅ 生成CordovaLib模块AndroidManifest.xml"
           else
             echo "❌ CordovaLib模块AndroidManifest.xml生成失败"
             exit 1
           fi
 
+          # 4. 新增：生成默认应用图标（mipmap/ic_launcher）
+          # 创建mipmap资源目录（适配不同分辨率）
+          MIPMAP_DIR="${{ env.PROJECT_ROOT }}/app/src/main/res/mipmap-anydpi-v26"
+          mkdir -p "$MIPMAP_DIR" || { echo "❌ 创建mipmap目录失败"; exit 1; }
+          
+          # 生成矢量图标XML（简单的圆形图标）
+          LAUNCHER_ICON="$MIPMAP_DIR/ic_launcher.xml"
+          cat > "$LAUNCHER_ICON" << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24.0"
+              android:viewportHeight="24.0">
+              <path
+                  android:fillColor="#FF0000"  <!-- 红色圆形作为默认图标 -->
+                  android:pathData="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2z" />
+          </vector>
+          EOF
+          
+          # 验证图标是否生成成功
+          if [ -f "$LAUNCHER_ICON" ] && [ -s "$LAUNCHER_ICON" ]; then
+            echo "✅ 生成默认应用图标：$LAUNCHER_ICON"
+          else
+            echo "❌ 应用图标生成失败"
+            exit 1
+          fi
+
+          # 5. 新增：生成字符串资源（解决app_name引用）
+          VALUES_DIR="${{ env.PROJECT_ROOT }}/app/src/main/res/values"
+          mkdir -p "$VALUES_DIR" || { echo "❌ 创建values目录失败"; exit 1; }
+          STRINGS_FILE="$VALUES_DIR/strings.xml"
+          cat > "$STRINGS_FILE" << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">${{ env.APP_NAME }}</string>  <!-- 应用名称 -->
+          </resources>
+          EOF
+          
+          if [ -f "$STRINGS_FILE" ] && [ -s "$STRINGS_FILE" ]; then
+            echo "✅ 生成字符串资源：$STRINGS_FILE"
+          else
+            echo "❌ 字符串资源生成失败"
+            exit 1
+          fi
       ########################################################################
       # 步骤8：构建安卓应用（修复Task 'clean' not found错误 + Java版本兼容）
       ########################################################################
