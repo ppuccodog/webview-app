@@ -18,7 +18,7 @@ jobs:
         run: |
           export TIMEOUT=300
           
-          # 替换为阿里云Ubuntu镜像源
+          # 替换为阿里云Ubuntu镜像源（解决卡包问题）
           sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
           sudo tee /etc/apt/sources.list > /dev/null << EOF
           deb http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse
@@ -32,8 +32,6 @@ jobs:
           sudo apt-get install -y -qq openjdk-11-jdk
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
 
-      - name: 配置Android SDK
-        run: |
           # 配置Android SDK路径
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p "$ANDROID_SDK_PATH"
@@ -51,8 +49,6 @@ jobs:
           mv "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools/"* "$ANDROID_SDK_PATH/cmdline-tools/latest/" 2>/dev/null || true
           rm -rf "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools"
 
-      - name: 安装SDK组件与Gradle
-        run: |
           # 接受SDK许可证+安装组件
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/latest/bin/sdkmanager"
           chmod +x "$SDK_MANAGER"
@@ -73,17 +69,16 @@ jobs:
           fi
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
-
-      - name: 读取配置文件
+      - name: 读取 config.txt 配置（网址/包名/应用名/版本号）
         run: |
-          # 定义默认配置
+          # 定义默认配置（防止 config.txt 缺失）
           DEFAULT_CUSTOM_URL="https://www.baidu.com"
           DEFAULT_APP_PACKAGE="com.my.browserapp"
           DEFAULT_APP_NAME="自定义浏览器"
           DEFAULT_APP_VERSION_NAME="1.0.0"
           DEFAULT_APP_VERSION_CODE="1"
 
-          # 读取 config.txt
+          # 读取 config.txt（格式：键=值，每行一个配置）
           if [ -f "config.txt" ]; then
             echo "✅ 读取 config.txt 配置..."
             CUSTOM_URL=$(grep -E "^CUSTOM_URL=" config.txt | cut -d'=' -f2- | sed 's/^[ \t]*//;s/[ \t]*$//' || echo "$DEFAULT_CUSTOM_URL")
@@ -125,7 +120,7 @@ jobs:
           echo "版本名称：$APP_VERSION_NAME"
           echo "版本号（整数）：$APP_VERSION_CODE"
 
-      - name: 创建项目结构
+      - name: 构建安卓套壳应用（初始化项目结构）
         run: |
           export JAVA_HOME="${{ env.JDK11_PATH }}"
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
@@ -139,39 +134,27 @@ jobs:
           APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
           APP_VERSION_CODE="${{ env.APP_VERSION_CODE }}"
 
-          # 创建项目目录
+          # 动态创建项目目录（按包名生成Java目录结构）
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
+          # app模块的Java目录（存放主Activity，引用布局资源）
           APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"
+          # 布局资源放在app模块（CordovaLib不再依赖）
           APP_LAYOUT_DIR="$APP_DIR/src/main/res/layout"
+          # 图片/动画资源目录
           APP_DRAWABLE_DIR="$APP_DIR/src/main/res/drawable"
-          APP_ANIM_DIR="$APP_DIR/src/main/res/anim"
           
           # 清理旧项目残留并创建新目录
           rm -rf "$PROJECT_PATH"
           mkdir -p "$APP_JAVA_DIR"
           mkdir -p "$APP_LAYOUT_DIR"
           mkdir -p "$APP_DRAWABLE_DIR"
-          mkdir -p "$APP_ANIM_DIR"
           mkdir -p "$APP_DIR/src/main/res/values"
           mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
-          
-          # 保存路径到环境变量供后续步骤使用
-          echo "PROJECT_PATH=$PROJECT_PATH" >> $GITHUB_ENV
-          echo "ANDROID_ROOT=$ANDROID_ROOT" >> $GITHUB_ENV
-          echo "APP_DIR=$APP_DIR" >> $GITHUB_ENV
-          echo "CORDOVA_LIB_DIR=$CORDOVA_LIB_DIR" >> $GITHUB_ENV
-          echo "APP_JAVA_DIR=$APP_JAVA_DIR" >> $GITHUB_ENV
-          echo "APP_LAYOUT_DIR=$APP_LAYOUT_DIR" >> $GITHUB_ENV
-          echo "APP_DRAWABLE_DIR=$APP_DRAWABLE_DIR" >> $GITHUB_ENV
-          echo "APP_ANIM_DIR=$APP_ANIM_DIR" >> $GITHUB_ENV
-
-      - name: 生成布局文件
-        run: |
-          # 生成主布局文件
-          cat > "${{ env.APP_LAYOUT_DIR }}/activity_main.xml" << 'EOF'
+          # 生成主布局文件（带优化的加载动画）
+          cat > "$APP_LAYOUT_DIR/activity_main.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
@@ -214,68 +197,8 @@ jobs:
           </RelativeLayout>
           EOF
 
-          # 生成退出确认对话框布局
-          cat > "${{ env.APP_LAYOUT_DIR }}/exit_dialog.xml" << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-              android:id="@+id/dialog_container"
-              android:layout_width="280dp"
-              android:layout_height="wrap_content"
-              android:background="@drawable/dialog_bg"
-              android:orientation="vertical"
-              android:padding="24dp">
-
-              <TextView
-                  android:layout_width="match_parent"
-                  android:layout_height="wrap_content"
-                  android:text="确认退出应用？"
-                  android:textColor="#333333"
-                  android:textSize="18sp"
-                  android:textStyle="bold"
-                  android:gravity="center"
-                  android:layout_marginBottom="16dp"/>
-
-              <TextView
-                  android:layout_width="match_parent"
-                  android:layout_height="wrap_content"
-                  android:text="确定要离开当前应用吗？"
-                  android:textColor="#666666"
-                  android:textSize="14sp"
-                  android:gravity="center"
-                  android:layout_marginBottom="24dp"/>
-
-              <LinearLayout
-                  android:layout_width="match_parent"
-                  android:layout_height="wrap_content"
-                  android:orientation="horizontal"
-                  android:gravity="center"
-                  android:spacing="16dp">
-
-                  <Button
-                      android:id="@+id/btn_cancel"
-                      android:layout_width="100dp"
-                      android:layout_height="40dp"
-                      android:text="取消"
-                      android:textColor="#333333"
-                      android:background="@drawable/btn_cancel_bg"
-                      android:textSize="16sp"/>
-
-                  <Button
-                      android:id="@+id/btn_exit"
-                      android:layout_width="100dp"
-                      android:layout_height="40dp"
-                      android:text="退出"
-                      android:textColor="#FFFFFF"
-                      android:background="@drawable/btn_exit_bg"
-                      android:textSize="16sp"/>
-              </LinearLayout>
-          </LinearLayout>
-          EOF
-
-      - name: 生成资源文件
-        run: |
           # 生成加载动画渐变背景
-          cat > "${{ env.APP_DRAWABLE_DIR }}/loading_bg_gradient.xml" << 'EOF'
+          cat > "$APP_DRAWABLE_DIR/loading_bg_gradient.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <shape xmlns:android="http://schemas.android.com/apk/res/android"
               android:shape="rectangle">
@@ -289,7 +212,7 @@ jobs:
           EOF
 
           # 生成自定义圆形加载动画
-          cat > "${{ env.APP_DRAWABLE_DIR }}/loading_circle.xml" << 'EOF'
+          cat > "$APP_DRAWABLE_DIR/loading_circle.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <animated-rotate xmlns:android="http://schemas.android.com/apk/res/android"
               android:duration="1200"
@@ -313,68 +236,16 @@ jobs:
           </animated-rotate>
           EOF
 
-          # 生成对话框背景
-          cat > "${{ env.APP_DRAWABLE_DIR }}/dialog_bg.xml" << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <shape xmlns:android="http://schemas.android.com/apk/res/android"
-              android:shape="rectangle">
-              <solid android:color="#FFFFFF"/>
-              <corners android:radius="12dp"/>
-              <elevation android:elevation="8dp"/>
-          </shape>
-          EOF
-
-          # 生成取消按钮背景
-          cat > "${{ env.APP_DRAWABLE_DIR }}/btn_cancel_bg.xml" << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <shape xmlns:android="http://schemas.android.com/apk/res/android"
-              android:shape="rectangle">
-              <solid android:color="#F5F5F5"/>
-              <corners android:radius="20dp"/>
-          </shape>
-          EOF
-
-          # 生成退出按钮背景
-          cat > "${{ env.APP_DRAWABLE_DIR }}/btn_exit_bg.xml" << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <shape xmlns:android="http://schemas.android.com/apk/res/android"
-              android:shape="rectangle">
-              <solid android:color="#2196F3"/>
-              <corners android:radius="20dp"/>
-          </shape>
-          EOF
-
-          # 生成页面过渡动画（淡入）
-          cat > "${{ env.APP_ANIM_DIR }}/fade_in.xml" << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <alpha xmlns:android="http://schemas.android.com/apk/res/android"
-              android:duration="300"
-              android:fromAlpha="0.0"
-              android:toAlpha="1.0"/>
-          EOF
-
-          # 生成页面过渡动画（淡出）
-          cat > "${{ env.APP_ANIM_DIR }}/fade_out.xml" << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <alpha xmlns:android="http://schemas.android.com/apk/res/android"
-              android:duration="300"
-              android:fromAlpha="1.0"
-              android:toAlpha="0.0"/>
-          EOF
-
           # 生成字符串资源文件
-          cat > "${{ env.APP_DIR }}/src/main/res/values/strings.xml" << EOF
+          cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
-              <string name="app_name">${{ env.APP_NAME }}</string>
+              <string name="app_name">$APP_NAME</string>
               <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
           </resources>
           EOF
-
-      - name: 生成Java代码
-        run: |
           # 生成CordovaLib模块的WebView工具类
-          cat > "${{ env.CORDOVA_LIB_DIR }}/src/main/java/org/apache/cordova/WebViewHelper.java" << 'EOF'
+          cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/WebViewHelper.java" << EOF
           package org.apache.cordova;
           import android.content.Context;
           import android.os.Handler;
@@ -492,36 +363,20 @@ jobs:
           }
           EOF
 
-          # 生成app模块的主Activity（带退出确认功能）
-          cat > "${{ env.APP_JAVA_DIR }}/MainActivity.java" << EOF
-          package ${{ env.APP_PACKAGE }};
+          # 生成app模块的主Activity
+          cat > "$APP_JAVA_DIR/MainActivity.java" << EOF
+          package $APP_PACKAGE;
           import android.app.Activity;
           import android.os.Bundle;
-          import android.os.Handler;
-          import android.view.Gravity;
-          import android.view.View;
-          import android.view.Window;
-          import android.view.WindowManager;
           import android.webkit.WebView;
           import android.widget.LinearLayout;
-          import android.widget.TextView;
-          import android.widget.Button;
-          import android.app.AlertDialog;
-          import android.view.animation.Animation;
-          import android.view.animation.ScaleAnimation;
-          import android.view.animation.TranslateAnimation;
-          import android.view.animation.AnimationSet;
-          import android.graphics.Color;
-          import android.graphics.drawable.ColorDrawable;
-
           // 导入CordovaLib的通用工具类
           import org.apache.cordova.WebViewHelper;
           // 引用app模块的R资源
-          import ${{ env.APP_PACKAGE }}.R;
+          import $APP_PACKAGE.R;
 
           public class MainActivity extends Activity {
-              private WebViewHelper webViewHelper;
-              private AlertDialog exitDialog; // 退出确认对话框
+              private WebViewHelper webViewHelper;  // 通用WebView工具类实例
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -535,107 +390,19 @@ jobs:
                   
                   // 初始化CordovaLib的工具类
                   webViewHelper = new WebViewHelper(this, webView, loadingLayout);
-                  webViewHelper.setWebViewClient();
-                  
-                  // 初始化退出对话框
-                  initExitDialog();
+                  webViewHelper.setWebViewClient();  // 设置WebViewClient
                   
                   // 加载目标网址
-                  webViewHelper.loadUrl("${{ env.CUSTOM_URL }}");
+                  webViewHelper.loadUrl("$CUSTOM_URL");
               }
               
-              // 初始化退出确认对话框
-              private void initExitDialog() {
-                  // 创建自定义对话框
-                  exitDialog = new AlertDialog.Builder(this).create();
-                  exitDialog.setCancelable(true);
-                  
-                  // 自定义对话框布局
-                  View dialogView = getLayoutInflater().inflate(R.layout.exit_dialog, null);
-                  exitDialog.setView(dialogView);
-                  
-                  // 设置对话框背景透明
-                  Window window = exitDialog.getWindow();
-                  if (window != null) {
-                      window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-                      // 设置对话框位置和动画
-                      WindowManager.LayoutParams params = window.getAttributes();
-                      params.gravity = Gravity.CENTER;
-                      window.setAttributes(params);
-                  }
-                  
-                  // 绑定按钮事件
-                  Button btnCancel = dialogView.findViewById(R.id.btn_cancel);
-                  Button btnExit = dialogView.findViewById(R.id.btn_exit);
-                  
-                  btnCancel.setOnClickListener(v -> {
-                      // 取消按钮动画
-                      animateButton(btnCancel);
-                      new Handler().postDelayed(exitDialog::dismiss, 200);
-                  });
-                  
-                  btnExit.setOnClickListener(v -> {
-                      // 退出按钮动画
-                      animateButton(btnExit);
-                      new Handler().postDelayed(() -> {
-                          exitDialog.dismiss();
-                          finish(); // 关闭应用
-                          // 添加页面退出动画
-                          overridePendingTransition(R.anim.fade_in, R.anim.fade_out);
-                      }, 200);
-                  });
-              }
-              
-              // 按钮点击动画
-              private void animateButton(View view) {
-                  ScaleAnimation scaleAnim = new ScaleAnimation(
-                      1.0f, 0.9f, 1.0f, 0.9f,
-                      Animation.RELATIVE_TO_SELF, 0.5f,
-                      Animation.RELATIVE_TO_SELF, 0.5f
-                  );
-                  scaleAnim.setDuration(150);
-                  scaleAnim.setRepeatMode(Animation.REVERSE);
-                  scaleAnim.setRepeatCount(1);
-                  view.startAnimation(scaleAnim);
-              }
-              
-              // 返回键处理
+              // 返回键后退逻辑
               @Override
               public void onBackPressed() {
                   if (webViewHelper != null && webViewHelper.getWebView().canGoBack()) {
-                      // 如果网页可以后退，则后退
                       webViewHelper.getWebView().goBack();
                   } else {
-                      // 显示退出确认对话框
-                      showExitDialogWithAnimation();
-                  }
-              }
-              
-              // 显示带动画的退出对话框
-              private void showExitDialogWithAnimation() {
-                  if (exitDialog != null && !exitDialog.isShowing()) {
-                      exitDialog.show();
-                      
-                      // 给对话框添加弹出动画
-                      View dialogView = exitDialog.findViewById(R.id.dialog_container);
-                      if (dialogView != null) {
-                          TranslateAnimation translateAnim = new TranslateAnimation(
-                              0, 0, 500, 0
-                          );
-                          translateAnim.setDuration(300);
-                          
-                          ScaleAnimation scaleAnim = new ScaleAnimation(
-                              0.8f, 1.0f, 0.8f, 1.0f,
-                              Animation.RELATIVE_TO_SELF, 0.5f,
-                              Animation.RELATIVE_TO_SELF, 0.5f
-                          );
-                          scaleAnim.setDuration(300);
-                          
-                          AnimationSet set = new AnimationSet(true);
-                          set.addAnimation(translateAnim);
-                          set.addAnimation(scaleAnim);
-                          dialogView.startAnimation(set);
-                      }
+                      super.onBackPressed();
                   }
               }
               
@@ -661,21 +428,15 @@ jobs:
                   if (webViewHelper != null) {
                       webViewHelper.getWebView().destroy();
                   }
-                  if (exitDialog != null && exitDialog.isShowing()) {
-                      exitDialog.dismiss();
-                  }
                   super.onDestroy();
               }
           }
           EOF
-
-      - name: 生成配置文件与构建
-        run: |
           # 生成AndroidManifest.xml清单文件
-          cat > "${{ env.APP_DIR }}/src/main/AndroidManifest.xml" << EOF
+          cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-                    package="${{ env.APP_PACKAGE }}">
+                    package="$APP_PACKAGE">
               <!-- 配置支持的SDK版本 -->
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
               
@@ -685,7 +446,7 @@ jobs:
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
               
               <application
-                  android:label="${{ env.APP_NAME }}"
+                  android:label="$APP_NAME"
                   android:theme="@style/AppTheme"
                   android:hardwareAccelerated="true"
                   android:usesCleartextTraffic="true">
@@ -714,7 +475,7 @@ jobs:
           EOF
 
           # 生成Gradle基础配置
-          cat > "${{ env.ANDROID_ROOT }}/gradle.properties" << 'EOF'
+          cat > "$ANDROID_ROOT/gradle.properties" << EOF
           # 启用AndroidX支持
           android.useAndroidX=true
           # 关闭Jetifier
@@ -730,12 +491,12 @@ jobs:
           EOF
 
           # 生成模块依赖配置
-          cat > "${{ env.ANDROID_ROOT }}/settings.gradle" << 'EOF'
+          cat > "$ANDROID_ROOT/settings.gradle" << EOF
           include ':app', ':CordovaLib'
           EOF
 
           # 生成CordovaLib库模块配置
-          cat > "${{ env.CORDOVA_LIB_DIR }}/build.gradle" << 'EOF'
+          cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           buildscript {
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/google' }
@@ -767,9 +528,8 @@ jobs:
               implementation 'androidx.appcompat:appcompat:1.0.2'
           }
           EOF
-
           # 生成主应用模块配置
-          cat > "${{ env.APP_DIR }}/build.gradle" << EOF
+          cat > "$APP_DIR/build.gradle" << EOF
           buildscript {
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
@@ -783,14 +543,14 @@ jobs:
           
           android {
               compileSdk 30
-              namespace '${{ env.APP_PACKAGE }}'
+              namespace '$APP_PACKAGE'
               
               defaultConfig {
-                  applicationId "${{ env.APP_PACKAGE }}"
+                  applicationId "$APP_PACKAGE"
                   minSdk 21
                   targetSdk 30
-                  versionCode ${{ env.APP_VERSION_CODE }}
-                  versionName "${{ env.APP_VERSION_NAME }}"
+                  versionCode $APP_VERSION_CODE
+                  versionName "$APP_VERSION_NAME"
               }
               
               buildTypes {
@@ -818,7 +578,7 @@ jobs:
           EOF
 
           # 生成混淆规则
-          cat > "${{ env.APP_DIR }}/proguard-rules.pro" << EOF
+          cat > "$APP_DIR/proguard-rules.pro" << EOF
           # 保护WebView相关类
           -keepclassmembers class * extends android.webkit.WebViewClient {
               public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
@@ -829,12 +589,10 @@ jobs:
           }
           
           # 保护app模块的R资源类
-          -keep class ${{ env.APP_PACKAGE }}.R { *; }
-          -keep class ${{ env.APP_PACKAGE }}.R$layout { *; }
-          -keep class ${{ env.APP_PACKAGE }}.R$id { *; }
-          -keep class ${{ env.APP_PACKAGE }}.R$string { *; }
-          -keep class ${{ env.APP_PACKAGE }}.R$drawable { *; }
-          -keep class ${{ env.APP_PACKAGE }}.R$anim { *; }
+          -keep class $APP_PACKAGE.R { *; }
+          -keep class $APP_PACKAGE.R$layout { *; }
+          -keep class $APP_PACKAGE.R$id { *; }
+          -keep class $APP_PACKAGE.R$string { *; }
           
           # 保护CordovaLib的工具类
           -keep class org.apache.cordova.WebViewHelper { *; }
@@ -848,18 +606,16 @@ jobs:
 
           # 编译Release版本APK
           echo "=== 开始编译Release版本APK ==="
-          cd "${{ env.ANDROID_ROOT }}" || exit 1
+          cd "$ANDROID_ROOT" || exit 1
           
           gradle wrapper --gradle-version 7.0.2
           chmod +x gradlew
           ./gradlew clean :app:assembleRelease --stacktrace --info
-
-      - name: 处理APK文件
-        run: |
+          
           # 检查并复制APK
-          APK_SOURCE_SIGNED="${{ env.APP_DIR }}/build/outputs/apk/release/app-release.apk"
-          APK_SOURCE_UNSIGNED="${{ env.APP_DIR }}/build/outputs/apk/release/app-release-unsigned.apk"
-          APK_DEST="/home/runner/work/webview-app/webview-app/CustomBrowser-v${{ env.APP_VERSION_NAME }}.apk"
+          APK_SOURCE_SIGNED="$APP_DIR/build/outputs/apk/release/app-release.apk"
+          APK_SOURCE_UNSIGNED="$APP_DIR/build/outputs/apk/release/app-release-unsigned.apk"
+          APK_DEST="/home/runner/work/webview-app/webview-app/CustomBrowser-v$APP_VERSION_NAME.apk"
           
           if [ -f "$APK_SOURCE_SIGNED" ]; then
             cp "$APK_SOURCE_SIGNED" "$APK_DEST"
@@ -869,17 +625,7 @@ jobs:
             echo "✅ 已复制未签名APK：$APK_DEST"
           else
             echo "❌ 未找到APK文件"
-            ls -R "${{ env.APP_DIR }}/build/outputs"
-            exit 1
-          fi
-
-          # 验证APK文件完整性
-          if [ -f "$APK_DEST" ]; then
-            echo "📦 APK文件信息："
-            du -h "$APK_DEST"
-            echo "✅ APK构建成功，文件大小验证通过"
-          else
-            echo "❌ APK文件生成失败"
+            ls -R "$APP_DIR/build/outputs"
             exit 1
           fi
 
@@ -888,21 +634,18 @@ jobs:
           APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
           TAG_NAME="v$APP_VERSION_NAME"
           
-          # 配置Git用户信息
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
-          # 检查是否存在同名Tag，若存在则删除旧Tag
           if git rev-parse --verify --quiet "$TAG_NAME"; then
-            echo "⚠️ 检测到旧Tag $TAG_NAME，正在删除..."
-            git tag -d "$TAG_NAME"  # 删除本地Tag
-            git push origin --delete "$TAG_NAME" 2>/dev/null || true  # 删除远程Tag
+            echo "⚠️ 删除旧Tag $TAG_NAME"
+            git tag -d "$TAG_NAME"
+            git push origin --delete "$TAG_NAME" 2>/dev/null || true
           fi
           
-          # 创建新Tag并推送
-          git tag -a "$TAG_NAME" -m "自定义浏览器应用 $TAG_NAME 版本发布"
+          git tag -a "$TAG_NAME" -m "自定义浏览器应用 $TAG_NAME"
           if ! git push origin "$TAG_NAME"; then
-            echo "⚠️ 首次推送Tag失败，重试中..."
+            echo "⚠️ 重试推送Tag..."
             git push origin "$TAG_NAME" || exit 1
           fi
           echo "✅ Git Tag推送成功：$TAG_NAME"
@@ -918,34 +661,12 @@ jobs:
             ### 📱 应用信息
             - 应用名称：${{ env.APP_NAME }}
             - 包名：${{ env.APP_PACKAGE }}
-            - 支持系统：Android 5.0+（API 21及以上）
-            - 版本号：v${{ env.APP_VERSION_NAME }}
-            - 内部版本号：${{ env.APP_VERSION_CODE }}
-            
-            ### ✨ 功能亮点
-            - 基于WebView的网页套壳应用
-            - 自定义加载动画与过渡效果
-            - 返回键退出确认机制（带按钮动画）
-            - 支持HTTP/HTTPS链接访问
-            - 网页加载超时自动关闭
+            - 支持系统：Android 5.0+
+            - 版本：v${{ env.APP_VERSION_NAME }}
+            - 核心功能：网页加载+自定义加载动画
             
             ### 📥 下载
-            点击下方Assets中的APK文件下载安装
+            点击Assets中的APK文件下载安装
           files: /home/runner/work/webview-app/webview-app/CustomBrowser-v${{ env.APP_VERSION_NAME }}.apk
           draft: false
           prerelease: false
-
-      - name: 验证发布结果
-        run: |
-          APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
-          RELEASE_URL="https://api.github.com/repos/${{ github.repository }}/releases/tags/v$APP_VERSION_NAME"
-          
-          echo "🔍 验证发布结果：$RELEASE_URL"
-          if curl -s "$RELEASE_URL" | grep -q "upload_url"; then
-            echo "✅ GitHub Release发布成功"
-            echo "📌 发布地址：https://github.com/${{ github.repository }}/releases/tag/v$APP_VERSION_NAME"
-          else
-            echo "❌ GitHub Release发布失败"
-            exit 1
-          fi
-    
