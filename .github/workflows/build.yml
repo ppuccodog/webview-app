@@ -19,7 +19,7 @@ jobs:
 
       - name: 安装依赖工具（XML解析+图片处理）
         run: |
-          # 安装XML解析工具、图片处理工具和JDK
+          # 安装XML解析、图片处理工具和JDK
           sudo apt-get update -y
           sudo apt-get install -y xmlstarlet imagemagick openjdk-11-jdk
           
@@ -140,44 +140,69 @@ jobs:
           echo "CUSTOM_URL=$CUSTOM_URL" >> $GITHUB_ENV
 
       ########################################################################
-      # 步骤4：处理应用图标（修复默认图标生成错误）
+      # 步骤4：处理应用图标（规范文件名+清理旧文件）
       ########################################################################
-      - name: 处理应用图标（支持默认图标）
+      - name: 处理应用图标（规范命名+自动修复）
         run: |
-          # 创建图标目录（包含values目录，用于后续资源文件）
+          # 1. 初始化路径+清理旧图标（避免残留带横杠的错误文件）
           RES_DIR="/home/runner/work/webview-app/webview-app/myapp/android-project/app/src/main/res"
+          # 删除所有mipmap目录下的旧图标（防止历史文件干扰）
+          rm -rf "$RES_DIR/mipmap-"*"/ic_launcher"*".png" 2>/dev/null || true
+          # 重新创建干净的资源目录
           mkdir -p "$RES_DIR/mipmap-mdpi" "$RES_DIR/mipmap-hdpi" "$RES_DIR/mipmap-xhdpi" "$RES_DIR/mipmap-xxhdpi" "$RES_DIR/mipmap-xxxhdpi"
-          mkdir -p "$RES_DIR/values"  # 关键：提前创建values目录，用于strings.xml和styles.xml
+          mkdir -p "$RES_DIR/values"  # 用于存放strings.xml和styles.xml
           
-          # 图标映射表（用户图标路径 → 安卓图标路径+尺寸）
+          # 2. 图标映射表（规范文件名：仅小写+数字+下划线）
+          # 格式：用户图标路径 → 安卓目标路径:尺寸
           declare -A ICON_MAP=(
-            ["icon/icon-mdpi.png"]="$RES_DIR/mipmap-mdpi/ic_launcher.png:48x48"
-            ["icon/icon-hdpi.png"]="$RES_DIR/mipmap-hdpi/ic_launcher.png:72x72"
-            ["icon/icon-xhdpi.png"]="$RES_DIR/mipmap-xhdpi/ic_launcher.png:96x96"
-            ["icon/icon-xxhdpi.png"]="$RES_DIR/mipmap-xxhdpi/ic_launcher.png:144x144"
-            ["icon/icon-xxxhdpi.png"]="$RES_DIR/mipmap-xxxhdpi/ic_launcher.png:192x192"
+            ["icon/icon_mdpi.png"]="$RES_DIR/mipmap-mdpi/ic_launcher.png:48x48"
+            ["icon/icon_hdpi.png"]="$RES_DIR/mipmap-hdpi/ic_launcher.png:72x72"
+            ["icon/icon_xhdpi.png"]="$RES_DIR/mipmap-xhdpi/ic_launcher.png:96x96"
+            ["icon/icon_xxhdpi.png"]="$RES_DIR/mipmap-xxhdpi/ic_launcher.png:144x144"
+            ["icon/icon_xxxhdpi.png"]="$RES_DIR/mipmap-xxxhdpi/ic_launcher.png:192x192"
           )
 
-          # 处理图标（修复默认图标生成命令）
+          # 3. 处理图标（支持用户自定义+默认生成）
           for USER_ICON in "${!ICON_MAP[@]}"; do
             DEST_INFO=${ICON_MAP[$USER_ICON]}
             DEST_PATH=${DEST_INFO%%:*}
             DEST_SIZE=${DEST_INFO#*:}
             
-            if [ -f "$USER_ICON" ]; then
-              # 使用用户提供的图标
+            # 兼容用户可能用横杠命名的图标（自动将横杠→下划线）
+            USER_ICON_COMPAT=$(echo "$USER_ICON" | sed 's/-/_/g')
+            if [ -f "$USER_ICON_COMPAT" ]; then
+              convert "$USER_ICON_COMPAT" -resize "$DEST_SIZE!" "$DEST_PATH"
+              echo "✅ 处理自定义图标：$USER_ICON_COMPAT → $DEST_PATH"
+            elif [ -f "$USER_ICON" ]; then
               convert "$USER_ICON" -resize "$DEST_SIZE!" "$DEST_PATH"
-              echo "✅ 已使用自定义图标：$USER_ICON → $DEST_PATH"
+              echo "✅ 处理自定义图标：$USER_ICON → $DEST_PATH"
             else
-              # 生成默认图标（修复文本绘制语法）
+              # 生成默认图标（蓝色背景+白色APP文字）
               convert -size "$DEST_SIZE" xc:#2196F3 -fill white -font Arial -pointsize 16 -gravity center "label:APP" "$DEST_PATH"
               echo "⚠️ 未找到$USER_ICON，生成默认图标 → $DEST_PATH"
             fi
           done
+
+          # 4. 二次校验：自动修复所有非法图标名
+          echo -e "\n🔍 校验并修复图标文件名"
+          find "$RES_DIR/mipmap-"* -name "*.png" | while read -r ICON_FILE; do
+            ICON_FILENAME=$(basename "$ICON_FILE")
+            # 检查是否包含非法字符（仅允许a-z、0-9、_）
+            if [[ ! "$ICON_FILENAME" =~ ^[a-z0-9_]+\.png$ ]]; then
+              # 替换非法字符为下划线
+              NEW_FILENAME=$(echo "$ICON_FILENAME" | sed 's/[^a-z0-9_]/_/g')
+              NEW_PATH=$(dirname "$ICON_FILE")"/$NEW_FILENAME"
+              mv "$ICON_FILE" "$NEW_PATH"
+              echo "⚠️ 修复非法文件名：$ICON_FILENAME → $NEW_FILENAME"
+            else
+              echo "✅ 文件名规范：$ICON_FILENAME"
+            fi
+          done
+
           echo "RES_DIR=$RES_DIR" >> $GITHUB_ENV
 
       ########################################################################
-      # 步骤5：生成安卓项目代码（确保资源目录存在）
+      # 步骤5：生成安卓项目代码
       ########################################################################
       - name: 生成安卓项目代码
         run: |
@@ -187,9 +212,9 @@ jobs:
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
           JAVA_DIR="$APP_DIR/src/main/java/$(echo ${{ env.APP_PACKAGE }} | tr '.' '/')"
-          RES_DIR="${{ env.RES_DIR }}"  # 从图标处理步骤继承RES_DIR路径，确保目录已存在
+          RES_DIR="${{ env.RES_DIR }}"
           
-          # 创建必要目录（Java代码目录+项目基础目录）
+          # 创建必要目录
           mkdir -p "$JAVA_DIR" "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova" "$APP_DIR/src/main/assets/www"
 
           # -------------------------- 1. 核心WebView代码（CordovaActivity.java） --------------------------
@@ -216,18 +241,17 @@ jobs:
                   webView = new WebView(this);
                   WebSettings webSettings = webView.getSettings();
 
-                  // 基础配置
+                  // 基础配置（支持JS、缩放、混合内容）
                   webSettings.setJavaScriptEnabled(true);
                   webSettings.setDomStorageEnabled(true);
                   webSettings.setAllowFileAccess(true);
-                  webSettings.setAllowContentAccess(true);
                   webSettings.setSupportZoom(true);
                   webSettings.setBuiltInZoomControls(true);
                   webSettings.setDisplayZoomControls(false);
                   webSettings.setLoadWithOverviewMode(true);
                   webSettings.setUseWideViewPort(true);
 
-                  // 允许混合内容（HTTP/HTTPS）
+                  // 允许HTTP/HTTPS混合内容
                   if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                       webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                   }
@@ -235,7 +259,7 @@ jobs:
                   // 模拟浏览器User-Agent
                   webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.101 Mobile Safari/537.36");
 
-                  // 处理链接和证书
+                  // 处理链接跳转和证书错误
                   webView.setWebViewClient(new WebViewClient() {
                       @Override
                       public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -441,8 +465,7 @@ jobs:
           org.gradle.jvmargs=-Xmx1536m
           EOF
 
-          # -------------------------- 关键修复：生成Gradle wrapper文件 --------------------------
-          # 创建gradle/wrapper目录
+          # -------------------------- 生成Gradle wrapper文件 --------------------------
           mkdir -p "$ANDROID_ROOT/gradle/wrapper"
           
           # 生成gradle-wrapper.properties
@@ -469,7 +492,7 @@ jobs:
           exec "$GRADLE_HOME/bin/gradle" "$@"
           EOF
           
-          # 生成gradlew.bat（Windows，可选）
+          # 生成gradlew.bat（Windows）
           cat > "$ANDROID_ROOT/gradlew.bat" << 'EOF'
           @if "%DEBUG%" == "" @echo off
           setlocal
@@ -546,3 +569,4 @@ jobs:
           files: ${{ env.APK_PATH }}
           draft: false
           prerelease: false
+    
