@@ -1,4 +1,4 @@
-name: 安卓自定义自定义APP自动构建（完整修复版）
+name: 安卓自定义APP自动构建（完整修复版）
 on:
   workflow_dispatch:  # 手动触发构建
 permissions:
@@ -21,16 +21,17 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y xmlstarlet imagemagick openjdk-11-jdk tree
-          # 验证imagemagick安装
+          # 验证imagemagick安装（图标生成必需）
           if ! convert --version; then
-            echo "❌ imagemagick安装失败"
+            echo "❌ imagemagick安装失败，无法生成图标"
             exit 1
           fi
+          # 配置JDK环境变量
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
           
-          # 验证工具
-          java -version && echo "✅ Java正常" || exit 1
-          xmlstarlet --version && echo "✅ xmlstarlet正常" || exit 1
+          # 验证关键工具可用性
+          java -version && echo "✅ Java环境正常" || { echo "❌ Java环境异常"; exit 1; }
+          xmlstarlet --version && echo "✅ XML解析工具正常" || { echo "❌ XML解析工具异常"; exit 1; }
 
       ########################################################################
       # 步骤2：配置Android SDK+Gradle环境
@@ -38,6 +39,7 @@ jobs:
       - name: 配置Android构建环境
         run: |
           export TIMEOUT=300
+          # 清理旧环境避免冲突
           rm -rf "$HOME/android-sdk" "$HOME/gradle-7.0.2"
           
           # 配置Android SDK
@@ -49,14 +51,16 @@ jobs:
           # 下载SDK Tools
           SDK_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip"
           if ! wget --timeout=$TIMEOUT --tries=3 "$SDK_TOOLS_URL" -O sdk-tools.zip; then
+            echo "❌ 下载SDK Tools失败，重试1次"
             wget --timeout=$TIMEOUT --tries=2 "$SDK_TOOLS_URL" -O sdk-tools.zip || exit 1
           fi
+          # 正确解压SDK Tools（修复目录结构问题）
           mkdir -p "$ANDROID_SDK_PATH/cmdline-tools/latest"
           unzip -q sdk-tools.zip -d "$ANDROID_SDK_PATH/cmdline-tools/latest"
           mv "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools/"* "$ANDROID_SDK_PATH/cmdline-tools/latest/" 2>/dev/null || true
           rm -rf "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools"
 
-          # 安装SDK组件
+          # 安装SDK必要组件
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/latest/bin/sdkmanager"
           chmod +x "$SDK_MANAGER"
           yes | "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" --licenses || true
@@ -68,104 +72,136 @@ jobs:
             "extras;google;m2repository" \
             --verbose --no_https || exit 1
 
-          # 配置Gradle
+          # 配置Gradle 7.0.2
           GRADLE_VERSION="7.0.2"
           GRADLE_PATH="$HOME/gradle-$GRADLE_VERSION"
           GRADLE_URL="https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip"
           
+          # 清理旧Gradle
           rm -rf "$GRADLE_PATH"
+          
+          # 下载并验证Gradle
           if ! wget --timeout=$TIMEOUT --tries=3 "$GRADLE_URL" -O gradle.zip; then
+            echo "❌ 下载Gradle失败，重试1次"
             wget --timeout=$TIMEOUT --tries=2 "$GRADLE_URL" -O gradle.zip || exit 1
           fi
           
+          # 验证压缩包完整性
           unzip -t gradle.zip || {
+            echo "❌ Gradle压缩包损坏，重新下载"
             rm gradle.zip
             wget "$GRADLE_URL" -O gradle.zip || exit 1
-            unzip -t gradle.zip || exit 1
+            unzip -t gradle.zip || { echo "❌ Gradle压缩包再次损坏"; exit 1; }
           }
           
+          # 解压并配置权限
           unzip -q gradle.zip -d "$HOME"
           chmod -R 755 "$GRADLE_PATH"
-          "$GRADLE_PATH/bin/gradle" --version || exit 1
+          
+          # 验证Gradle安装
+          echo "✅ 验证Gradle版本："
+          "$GRADLE_PATH/bin/gradle" --version || { echo "❌ Gradle安装失败"; exit 1; }
+          
+          # 配置环境变量
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
-
-      ########################################################################
-      # 步骤3：解析配置文件
+		        ########################################################################
+      # 步骤3：解析配置文件（读取应用信息）
       ########################################################################
       - name: 解析配置文件
         run: |
+          # 初始化默认配置
           APP_PACKAGE="com.my.defaultapp"
           APP_NAME="我的应用"
           APP_VERSION="1.0.0"
           LOAD_TIMEOUT="60000"
           CUSTOM_URL="https://www.baidu.com"
 
-          echo "📂 当前目录文件："
+          # 显示当前目录文件，确认配置文件是否存在
+          echo "📂 当前工作目录文件列表："
           ls -la
           
+          # 读取config.xml（若存在）
           if [ -f "config.xml" ]; then
-            echo "✅ 发现config.xml"
+            echo "✅ 发现config.xml，开始解析..."
+            # 验证XML格式有效性
             if xmlstarlet val -q "config.xml"; then
+              # 读取包名
               CONFIG_PACKAGE=$(xmlstarlet sel -t -v "/widget/@id" "config.xml" 2>/dev/null)
               if [ -n "$CONFIG_PACKAGE" ] && [[ "$CONFIG_PACKAGE" =~ ^[a-zA-Z0-9.]+$ ]]; then
                 APP_PACKAGE="$CONFIG_PACKAGE"
+                echo "📦 包名：$APP_PACKAGE（来自config.xml）"
               fi
               
+              # 读取应用名称
               CONFIG_NAME=$(xmlstarlet sel -t -v "/widget/name" "config.xml" 2>/dev/null)
               if [ -n "$CONFIG_NAME" ]; then
                 APP_NAME="$CONFIG_NAME"
+                echo "🏷️ 应用名称：$APP_NAME（来自config.xml）"
               fi
               
+              # 读取版本号
               CONFIG_VERSION=$(xmlstarlet sel -t -v "/widget/@version" "config.xml" 2>/dev/null)
               if [ -n "$CONFIG_VERSION" ] && [[ "$CONFIG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
                 APP_VERSION="$CONFIG_VERSION"
+                echo "🔢 版本号：$APP_VERSION（来自config.xml）"
               fi
               
+              # 读取超时设置
               CONFIG_TIMEOUT=$(xmlstarlet sel -t -v "/widget/platform[@name='android']/preference[@name='LoadUrlTimeoutValue']/@value" "config.xml" 2>/dev/null)
               if [ -n "$CONFIG_TIMEOUT" ] && [[ "$CONFIG_TIMEOUT" =~ ^[0-9]+$ ]]; then
                 LOAD_TIMEOUT="$CONFIG_TIMEOUT"
+                echo "⏱️ 加载超时：$LOAD_TIMEOUT（来自config.xml）"
               fi
             else
-              echo "⚠️ config.xml格式无效"
+              echo "⚠️ config.xml格式无效，使用默认配置"
             fi
           else
-            echo "⚠️ 未找到config.xml"
+            echo "⚠️ 未找到config.xml，使用默认配置"
           fi
 
+          # 读取config.txt（配置目标网址）
           if [ -f "config.txt" ]; then
             CUSTOM_URL=$(cat config.txt | tr -d '\r')
+            # 补全HTTPS协议（若缺失）
             [[ ! $CUSTOM_URL =~ ^http ]] && CUSTOM_URL="https://$CUSTOM_URL"
+            echo "🌐 目标网址：$CUSTOM_URL（来自config.txt）"
           fi
 
+          # 处理应用名称特殊字符（避免构建错误）
           APP_NAME_SAFE=$(echo "$APP_NAME" | sed 's/[^a-zA-Z0-9_-]/_/g')
           [ -z "$APP_NAME_SAFE" ] && APP_NAME_SAFE="my_app_${RANDOM:0:4}"
 
-          echo -e "\n📋 最终配置："
-          echo "   - 包名：$APP_PACKAGE"
-          echo "   - 应用名称：$APP_NAME"
-          echo "   - 版本：$APP_VERSION"
-          echo "   - 网址：$CUSTOM_URL"
-          echo "   - 超时：$LOAD_TIMEOUT"
+          # 输出最终配置（方便调试）
+          echo -e "\n📋 最终构建配置："
+          echo "   - 应用包名：$APP_PACKAGE"
+          echo "   - 应用名称：$APP_NAME（安全名称：$APP_NAME_SAFE）"
+          echo "   - 版本号：$APP_VERSION"
+          echo "   - 目标网址：$CUSTOM_URL"
+          echo "   - 加载超时：$LOAD_TIMEOUT ms"
 
+          # 保存配置到环境变量（后续步骤使用）
           echo "APP_PACKAGE=$APP_PACKAGE" >> $GITHUB_ENV
           echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
           echo "APP_NAME_SAFE=$APP_NAME_SAFE" >> $GITHUB_ENV
           echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
           echo "LOAD_TIMEOUT=$LOAD_TIMEOUT" >> $GITHUB_ENV
           echo "CUSTOM_URL=$CUSTOM_URL" >> $GITHUB_ENV
+          # 定义项目路径
           echo "PROJECT_ROOT=$GITHUB_WORKSPACE/myapp/android-project" >> $GITHUB_ENV
           echo "APP_RES_DIR=$GITHUB_WORKSPACE/myapp/android-project/app/src/main/res" >> $GITHUB_ENV
-		        ########################################################################
+
+      ########################################################################
       # 步骤4：创建项目目录结构
       ########################################################################
       - name: 创建项目目录结构
         run: |
-          echo "✅ 创建项目结构：${{ env.PROJECT_ROOT }}"
-          
+          echo "✅ 开始创建项目目录：${{ env.PROJECT_ROOT }}"
+          # 创建核心目录
           mkdir -p "${{ env.PROJECT_ROOT }}/app/src/main"
           mkdir -p "${{ env.PROJECT_ROOT }}/CordovaLib/src/main/java/org/apache/cordova"
           
+          # 创建资源目录（含所有分辨率的图标目录）
           mkdir -p "${{ env.APP_RES_DIR }}/mipmap-mdpi"
           mkdir -p "${{ env.APP_RES_DIR }}/mipmap-hdpi"
           mkdir -p "${{ env.APP_RES_DIR }}/mipmap-xhdpi"
@@ -173,30 +209,33 @@ jobs:
           mkdir -p "${{ env.APP_RES_DIR }}/mipmap-xxxhdpi"
           mkdir -p "${{ env.APP_RES_DIR }}/values"
           
+          # 创建Java源码目录（按包名分层）
           JAVA_DIR="${{ env.PROJECT_ROOT }}/app/src/main/java/$(echo ${{ env.APP_PACKAGE }} | tr '.' '/')"
           mkdir -p "$JAVA_DIR"
           echo "JAVA_DIR=$JAVA_DIR" >> $GITHUB_ENV
-          
-          echo -e "\n📁 项目结构："
+
+          # 验证目录创建结果
+          echo -e "\n📁 项目目录结构（前5层）："
           tree -L 5 "${{ env.PROJECT_ROOT }}"
+          # 强制检查图标目录是否存在
           if [ ! -d "${{ env.APP_RES_DIR }}/mipmap-mdpi" ]; then
-            echo "❌ 图标目录缺失"
+            echo "❌ 图标目录创建失败，终止构建"
             exit 1
           fi
-
-      ########################################################################
+		        ########################################################################
       # 步骤5：生成应用图标和资源文件
       ########################################################################
       - name: 生成应用图标和资源文件
         run: |
-          echo "✅ 生成资源文件：${{ env.APP_RES_DIR }}"
+          echo "✅ 开始生成资源文件（图标+配置）"
           
+          # 1. 生成应用图标（覆盖所有分辨率，三重容错）
           declare -A ICON_SPECS=(
-            ["mdpi"]="48x48"
-            ["hdpi"]="72x72"
-            ["xhdpi"]="96x96"
-            ["xxhdpi"]="144x144"
-            ["xxxhdpi"]="192x192"
+            ["mdpi"]="48x48"    # 基础分辨率
+            ["hdpi"]="72x72"    # 高清
+            ["xhdpi"]="96x96"   # 超高清
+            ["xxhdpi"]="144x144"# 2倍超高清
+            ["xxxhdpi"]="192x192"# 3倍超高清
           )
 
           for DPI in "${!ICON_SPECS[@]}"; do
@@ -204,50 +243,50 @@ jobs:
             DEST_DIR="${{ env.APP_RES_DIR }}/mipmap-$DPI"
             DEST_PATH="$DEST_DIR/ic_launcher.png"
             
-            mkdir -p "$DEST_DIR"
-            if [ ! -d "$DEST_DIR" ]; then
-              echo "❌ 图标目录创建失败"
-              exit 1
-            fi
-            
+            # 方案1：生成带两层圆圈的图标（默认）
             if convert -size "$SIZE" xc:transparent \
               -fill "#2196F3" -draw "circle $((SIZE/2)),$((SIZE/2)) $((SIZE/2)),0" \
               -fill "white" -draw "circle $((SIZE/2)),$((SIZE/2)) $((SIZE*3/10)),0" \
               -fill "#2196F3" -draw "circle $((SIZE/2)),$((SIZE/2)) $((SIZE/10)),0" \
               "$DEST_PATH"; then
-              echo "✅ 生成图标：$DEST_PATH"
+              echo "✅ 生成图标（默认方案）：$DEST_PATH"
             else
+              # 方案2：生成圆角矩形图标（备选）
               if convert -size "$SIZE" xc:"#2196F3" -roundrectangle 0,0,$SIZE,$SIZE,10,10 "$DEST_PATH"; then
-                echo "✅ 备选方案生成图标：$DEST_PATH"
+                echo "✅ 生成图标（备选方案1）：$DEST_PATH"
               else
+                # 方案3：生成纯色图标（终极容错）
                 convert -size "$SIZE" xc:"#2196F3" "$DEST_PATH"
                 if [ -f "$DEST_PATH" ] && [ -s "$DEST_PATH" ]; then
-                  echo "✅ 终极方案生成图标：$DEST_PATH"
+                  echo "✅ 生成图标（备选方案2）：$DEST_PATH"
                 else
-                  echo "❌ 图标生成失败"
+                  echo "❌ 所有图标生成方案失败，终止构建"
                   exit 1
                 fi
               fi
             fi
-            
+
+            # 最终验证图标有效性
             if [ ! -f "$DEST_PATH" ] || [ ! -s "$DEST_PATH" ]; then
-              echo "❌ 图标无效"
+              echo "❌ 图标无效（不存在或空文件）：$DEST_PATH"
               exit 1
             fi
             ls -lh "$DEST_PATH"
           done
 
+          # 2. 生成strings.xml（应用名称配置）
           STRINGS_FILE="${{ env.APP_RES_DIR }}/values/strings.xml"
           cat > "$STRINGS_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <string name="app_name">${{ env.APP_NAME }}</string>
               <string name="launcher_name">${{ env.APP_NAME }}</string>
-              <string name="ic_launcher">ic_launcher</string>
+              <string name="ic_launcher">ic_launcher</string> <!-- 显式关联图标资源 -->
           </resources>
           EOF
-          [ -f "$STRINGS_FILE" ] && echo "✅ 生成strings.xml" || exit 1
+          [ -f "$STRINGS_FILE" ] && echo "✅ 生成strings.xml" || { echo "❌ strings.xml生成失败"; exit 1; }
 
+          # 3. 生成styles.xml（应用样式配置）
           STYLES_FILE="${{ env.APP_RES_DIR }}/values/styles.xml"
           cat > "$STYLES_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
@@ -259,17 +298,18 @@ jobs:
               </style>
           </resources>
           EOF
-          [ -f "$STYLES_FILE" ] && echo "✅ 生成styles.xml" || exit 1
+          [ -f "$STYLES_FILE" ] && echo "✅ 生成styles.xml" || { echo "❌ styles.xml生成失败"; exit 1; }
 
-          echo -e "\n📄 资源文件列表："
+          # 验证所有资源文件
+          echo -e "\n📄 生成的资源文件列表："
           find "${{ env.APP_RES_DIR }}" -type f
 
       ########################################################################
-      # 步骤6：生成项目代码和配置
+      # 步骤6：生成项目核心代码和配置
       ########################################################################
-      - name: 生成项目代码和配置
+      - name: 生成项目核心代码和配置
         run: |
-          # 生成CordovaActivity
+          # 生成CordovaActivity（核心页面逻辑）
           CORDOVA_ACTIVITY="${{ env.PROJECT_ROOT }}/CordovaLib/src/main/java/org/apache/cordova/CordovaActivity.java"
           cat > "$CORDOVA_ACTIVITY" << EOF
           package org.apache.cordova;
@@ -345,7 +385,7 @@ jobs:
           EOF
           [ -f "$CORDOVA_ACTIVITY" ] && echo "✅ 生成CordovaActivity.java" || exit 1
 
-          # 生成AndroidManifest.xml
+          # 生成AndroidManifest.xml（应用配置清单）
           MANIFEST_FILE="${{ env.PROJECT_ROOT }}/app/src/main/AndroidManifest.xml"
           cat > "$MANIFEST_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
@@ -399,7 +439,7 @@ jobs:
           echo "✅ APK构建成功：$APK_PATH"
 
       ########################################################################
-      # 步骤8：上传构建产物
+      # 步骤8：上传构建产物到Release
       ########################################################################
       - name: 上传构建产物到Release
         uses: softprops/action-gh-release@v1
