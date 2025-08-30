@@ -569,38 +569,38 @@ jobs:
           EOF
           [ -f "$MANIFEST_FILE" ] && echo "✅ 生成AndroidManifest.xml" || exit 1
 
-########################################################################
-# 步骤8：构建安卓应用（修复Task 'clean' not found错误 + Java版本兼容）
-########################################################################
-- name: 构建安卓应用
-  run: |
-    cd ${{ env.PROJECT_ROOT }}
-    # 关键修复：强制指定Gradle使用JDK 11（避免使用系统默认的Java 17）
-    export JAVA_HOME=${{ env.JDK11_PATH }}
-    echo "当前使用的Java路径：$JAVA_HOME"
-    echo "当前Java版本：$(java -version 2>&1)"
-    
-    # 验证Gradle任务是否可用
-    echo "📋 可用的Gradle任务列表："
-    gradle tasks --all || { echo "❌ Gradle任务列表获取失败"; exit 1; }
-    
-    # 执行构建（先清理再构建Release版本）
-    echo "🚀 开始构建APK..."
-    gradle clean :app:assembleRelease --stacktrace
-    
-    # 查找生成的APK文件
-    APK_PATH=$(find . -name "*.apk" | grep -E "app-release\.apk$" | head -n 1)
-    if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
-      echo "❌ APK构建失败，未找到输出文件"
-      # 输出构建目录结构辅助调试
-      echo "📂 构建目录文件列表："
-      find . -name "*.apk"
-      exit 1
-    fi
-    echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
-    echo "✅ APK构建成功：$APK_PATH"
-    # 输出APK信息
-    ls -lh "$APK_PATH"
+      ########################################################################
+      # 步骤8：构建安卓应用（修复Task 'clean' not found错误 + Java版本兼容）
+      ########################################################################
+      - name: 构建安卓应用
+        run: |
+          cd ${{ env.PROJECT_ROOT }}
+          # 关键修复：强制指定Gradle使用JDK 11（避免使用系统默认的Java 17）
+          export JAVA_HOME=${{ env.JDK11_PATH }}
+          echo "当前使用的Java路径：$JAVA_HOME"
+          echo "当前Java版本：$(java -version 2>&1)"
+          
+          # 验证Gradle任务是否可用
+          echo "📋 可用的Gradle任务列表："
+          gradle tasks --all || { echo "❌ Gradle任务列表获取失败"; exit 1; }
+          
+          # 执行构建（先清理再构建Release版本）
+          echo "🚀 开始构建APK..."
+          gradle clean :app:assembleRelease --stacktrace
+          
+          # 查找生成的APK文件
+          APK_PATH=$(find . -name "*.apk" | grep -E "app-release\.apk$" | head -n 1)
+          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
+            echo "❌ APK构建失败，未找到输出文件"
+            # 输出构建目录结构辅助调试
+            echo "📂 构建目录文件列表："
+            find . -name "*.apk"
+            exit 1
+          fi
+          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
+          echo "✅ APK构建成功：$APK_PATH"
+          # 输出APK信息
+          ls -lh "$APK_PATH"
 
       ########################################################################
       # 步骤9：上传构建产物到Release
