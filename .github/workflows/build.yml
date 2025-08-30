@@ -1,4 +1,4 @@
-name: 安卓自定义APP自动构建（修复AndroidX配置）
+name: 安卓自定义APP自动构建（修复字体问题）
 on:
   workflow_dispatch:  # 手动触发构建
 permissions:
@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       ########################################################################
-      # 步骤1：拉取代码+安装基础依赖
+      # 步骤1：拉取代码+安装基础依赖（新增字体安装）
       ########################################################################
       - name: 拉取GitHub项目代码
         uses: actions/checkout@v4
@@ -17,12 +17,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: 安装核心依赖工具
+      - name: 安装核心依赖工具（含字体）
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y xmlstarlet imagemagick openjdk-11-jdk tree
+          # 安装基础工具+字体包（解决Arial缺失问题）
+          sudo apt-get install -y xmlstarlet imagemagick openjdk-11-jdk tree \
+            fonts-liberation fonts-dejavu fonts-freefont-ttf
           # 配置JDK环境
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
+          
+          # 验证已安装的字体
+          echo -e "\n已安装的字体列表："
+          convert -list font | grep -i "family"
 
       ########################################################################
       # 步骤2：配置Android SDK+Gradle环境
@@ -30,7 +36,7 @@ jobs:
       - name: 配置Android构建环境
         run: |
           export TIMEOUT=300
-          # 1. 清理旧环境（避免残留配置干扰）
+          # 1. 清理旧环境
           rm -rf "$HOME/android-sdk" "$HOME/gradle-7.0.2"
           
           # 2. 安装Android SDK
@@ -39,7 +45,7 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_SDK_PATH" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 3. 下载SDK Tools（使用Google官方源，确保完整性）
+          # 3. 下载SDK Tools
           SDK_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip"
           if ! wget --timeout=$TIMEOUT --tries=3 "$SDK_TOOLS_URL" -O sdk-tools.zip; then
             echo "❌ 下载SDK Tools失败，重试1次"
@@ -76,11 +82,11 @@ jobs:
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
       ########################################################################
-      # 步骤3：解析配置文件（简化逻辑，减少错误点）
+      # 步骤3：解析配置文件
       ########################################################################
       - name: 解析配置文件
         run: |
-          # 初始化默认配置（可通过config.xml覆盖）
+          # 初始化默认配置
           APP_PACKAGE="com.my.defaultapp"
           APP_NAME="我的应用"
           APP_VERSION="1.0.0"
@@ -101,7 +107,7 @@ jobs:
             [[ ! $CUSTOM_URL =~ ^http ]] && CUSTOM_URL="https://$CUSTOM_URL"
           fi
 
-          # 处理应用名称特殊字符（避免路径错误）
+          # 处理应用名称特殊字符
           APP_NAME_SAFE=$(echo "$APP_NAME" | sed 's/[^a-zA-Z0-9_-]/_/g')
 
           # 输出配置信息
@@ -120,16 +126,16 @@ jobs:
           echo "CUSTOM_URL=$CUSTOM_URL" >> $GITHUB_ENV
 
       ########################################################################
-      # 步骤4：生成应用图标（确保资源规范）
+      # 步骤4：生成应用图标（修复字体问题）
       ########################################################################
-      - name: 生成应用图标
+      - name: 生成应用图标（兼容系统字体）
         run: |
-          # 1. 初始化资源目录（彻底重建，避免残留错误文件）
+          # 1. 初始化资源目录
           RES_DIR="$GITHUB_WORKSPACE/myapp/android-project/app/src/main/res"
           rm -rf "$RES_DIR"
           mkdir -p "$RES_DIR/mipmap-mdpi" "$RES_DIR/mipmap-hdpi" "$RES_DIR/mipmap-xhdpi" "$RES_DIR/mipmap-xxhdpi" "$RES_DIR/mipmap-xxxhdpi" "$RES_DIR/values"
           
-          # 2. 定义图标规格（确保每个目录只有1个图标）
+          # 2. 定义图标规格
           declare -A ICON_SPECS=(
             ["mdpi"]="48x48"
             ["hdpi"]="72x72"
@@ -138,12 +144,32 @@ jobs:
             ["xxxhdpi"]="192x192"
           )
 
-          # 3. 生成图标（使用可靠的默认图标）
+          # 3. 选择系统可用字体（优先Liberation Sans，兼容Arial）
+          FONT_FAMILY="Liberation-Sans"
+          # 验证字体是否存在
+          if ! convert -list font | grep -qi "$FONT_FAMILY"; then
+            echo "⚠️ 未找到Liberation Sans，尝试使用DejaVu Sans"
+            FONT_FAMILY="DejaVu-Sans"
+          fi
+          if ! convert -list font | grep -qi "$FONT_FAMILY"; then
+            echo "⚠️ 未找到DejaVu Sans，尝试使用默认字体"
+            FONT_FAMILY=""  # 使用系统默认字体
+          fi
+          echo "✅ 用于生成图标的字体：$FONT_FAMILY"
+
+          # 4. 生成图标（使用兼容字体）
           for DPI in "${!ICON_SPECS[@]}"; do
             SIZE=${ICON_SPECS[$DPI]}
             DEST_PATH="$RES_DIR/mipmap-$DPI/ic_launcher.png"
-            # 生成蓝色背景+白色文字的默认图标
-            convert -size "$SIZE" xc:#2196F3 -fill white -font Arial -pointsize 12 -gravity center "label:APP" "$DEST_PATH"
+            # 根据是否有指定字体调整命令
+            if [ -n "$FONT_FAMILY" ]; then
+              convert -size "$SIZE" xc:#2196F3 -fill white \
+                -font "$FONT_FAMILY" -pointsize 12 -gravity center "label:APP" "$DEST_PATH"
+            else
+              # 不指定字体，使用系统默认
+              convert -size "$SIZE" xc:#2196F3 -fill white \
+                -pointsize 12 -gravity center "label:APP" "$DEST_PATH"
+            fi
             # 校验生成结果
             if [ ! -f "$DEST_PATH" ]; then
               echo "❌ 图标生成失败：$DEST_PATH"
@@ -152,7 +178,7 @@ jobs:
             echo "✅ 生成图标：$DEST_PATH"
           done
 
-          # 4. 生成基础资源文件
+          # 5. 生成基础资源文件
           cat > "$RES_DIR/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
@@ -170,13 +196,13 @@ jobs:
           </resources>
           EOF
 
-          # 输出资源目录结构（确认正确性）
+          # 输出资源目录结构
           echo -e "\n📁 资源目录结构："
           tree "$RES_DIR"
           echo "RES_DIR=$RES_DIR" >> $GITHUB_ENV
 
       ########################################################################
-      # 步骤5：生成安卓项目代码（关键：添加AndroidX配置）
+      # 步骤5：生成安卓项目代码
       ########################################################################
       - name: 生成安卓项目代码
         run: |
@@ -187,11 +213,11 @@ jobs:
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
           JAVA_DIR="$APP_DIR/src/main/java/$(echo ${{ env.APP_PACKAGE }} | tr '.' '/')"
           
-          # 清理旧项目（避免残留配置）
+          # 清理旧项目
           rm -rf "$ANDROID_ROOT"
           mkdir -p "$JAVA_DIR" "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova" "$APP_DIR/src/main/assets/www"
 
-          # 2. 核心WebView代码（CordovaActivity.java）
+          # 2. 核心WebView代码
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/CordovaActivity.java" << EOF
           package org.apache.cordova;
           import android.app.Activity;
@@ -293,14 +319,14 @@ jobs:
           }
           EOF
 
-          # 3. 主活动代码（MainActivity.java）
+          # 3. 主活动代码
           cat > "$JAVA_DIR/MainActivity.java" << EOF
           package ${{ env.APP_PACKAGE }};
           import org.apache.cordova.CordovaActivity;
           public class MainActivity extends CordovaActivity {}
           EOF
 
-          # 4. AndroidManifest.xml（权限配置）
+          # 4. AndroidManifest.xml
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -331,18 +357,13 @@ jobs:
           </manifest>
           EOF
 
-          # 5. Gradle配置文件（关键：添加AndroidX开关）
-          # 项目级gradle.properties（解决AndroidX配置问题的核心）
+          # 5. Gradle配置文件
+          # 项目级gradle.properties
           cat > "$ANDROID_ROOT/gradle.properties" << 'EOF'
-          # 启用AndroidX支持（解决本次错误的关键配置）
           android.useAndroidX=true
-          # 自动将第三方库迁移到AndroidX
           android.enableJetifier=true
-          # Gradle JVM配置
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-          # 启用守护进程加速构建
           org.gradle.daemon=true
-          # 启用并行构建
           org.gradle.parallel=true
           EOF
 
@@ -427,9 +448,8 @@ jobs:
           }
           EOF
 
-          # 添加ProGuard配置（避免混淆问题）
+          # ProGuard配置
           cat > "$APP_DIR/proguard-rules.pro" << 'EOF'
-          # 保留WebView相关类不被混淆
           -keepclassmembers class * extends android.webkit.WebViewClient {
               public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
               public boolean *(android.webkit.WebView, java.lang.String);
@@ -437,14 +457,12 @@ jobs:
           -keepclassmembers class * extends android.webkit.WebChromeClient {
               public void *(android.webkit.WebView, java.lang.String);
           }
-          # 保留应用入口类
           -keep class * extends android.app.Activity
-          # 保留AndroidX类
           -keep class androidx.** { *; }
           -dontwarn androidx.**
           EOF
 
-          # 添加Gradle wrapper配置
+          # Gradle wrapper配置
           mkdir -p "$ANDROID_ROOT/gradle/wrapper"
           cat > "$ANDROID_ROOT/gradle/wrapper/gradle-wrapper.properties" << 'EOF'
           distributionBase=GRADLE_USER_HOME
@@ -458,12 +476,8 @@ jobs:
           cp "$HOME/gradle-7.0.2/bin/gradle" "$ANDROID_ROOT/gradlew"
           chmod +x "$ANDROID_ROOT/gradlew"
 
-          # 输出项目结构确认
-          echo -e "\n📂 最终项目结构："
-          tree -L 3 "$ANDROID_ROOT"
-
       ########################################################################
-      # 步骤6：编译与发布（增强错误处理）
+      # 步骤6：编译与发布
       ########################################################################
       - name: 编译APK
         run: |
@@ -473,12 +487,7 @@ jobs:
           PROJECT_DIR="$GITHUB_WORKSPACE/myapp/android-project"
           cd "$PROJECT_DIR" || { echo "❌ 项目目录不存在"; exit 1; }
           
-          # 预检查Gradle配置
-          echo -e "\n📋 检查AndroidX配置："
-          grep "android.useAndroidX" "$PROJECT_DIR/gradle.properties"
-          grep "android.enableJetifier" "$PROJECT_DIR/gradle.properties"
-          
-          # 执行构建（显示详细日志便于调试）
+          # 构建APK
           ./gradlew clean :app:assembleRelease --stacktrace --info || {
             echo "❌ 编译失败，查看详细日志："
             cat "$PROJECT_DIR/app/build/reports/lint-results-release.xml"
