@@ -1,5 +1,5 @@
 CUSTOM_URL=http://cs.hs1314.cn
-APP_PACKAGE=com.yjsyy.csdh
+APP_PACKAGE=com.ysjyy.csdh
 APP_NAME=弋矶山测试
-APP_VERSION_NAME=1.0
+APP_VERSION_NAME=1.0.0
 APP_VERSION_CODE=1
