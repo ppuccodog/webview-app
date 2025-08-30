@@ -313,14 +313,31 @@ jobs:
           find "${{ env.APP_RES_DIR }}" -type f
 
       ########################################################################
-      # 步骤6：生成Gradle配置文件（修复Task 'clean' not found错误）
+      # 步骤6：生成Gradle配置文件（修复Task 'clean' not found + AndroidX支持）
       ########################################################################
       - name: 生成Gradle配置文件
         run: |
           echo "✅ 开始生成Gradle核心配置文件"
           PROJECT_ROOT="${{ env.PROJECT_ROOT }}"
 
-          # 1. 生成根目录settings.gradle（定义项目模块）
+          # 1. 生成gradle.properties（关键：启用AndroidX，解决依赖冲突）
+          GRADLE_PROPS_FILE="$PROJECT_ROOT/gradle.properties"
+          cat > "$GRADLE_PROPS_FILE" << EOF
+          # 启用AndroidX（必须，否则无法识别AndroidX依赖）
+          android.useAndroidX=true
+          # 禁用旧Support Library（避免与AndroidX冲突）
+          android.enableJetifier=true
+          # Gradle JVM配置（指定使用Java 11）
+          org.gradle.java.home=${{ env.JDK11_PATH }}
+          # 构建优化配置
+          org.gradle.daemon=true
+          org.gradle.parallel=true
+          org.gradle.configureondemand=true
+          org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m
+          EOF
+          [ -f "$GRADLE_PROPS_FILE" ] && echo "✅ 生成gradle.properties（已启用AndroidX）" || { echo "❌ gradle.properties生成失败"; exit 1; }
+
+          # 2. 生成根目录settings.gradle（定义项目模块）
           SETTINGS_FILE="$PROJECT_ROOT/settings.gradle"
           cat > "$SETTINGS_FILE" << EOF
           rootProject.name = 'android-project'
@@ -329,7 +346,7 @@ jobs:
           EOF
           [ -f "$SETTINGS_FILE" ] && echo "✅ 生成settings.gradle" || { echo "❌ settings.gradle生成失败"; exit 1; }
 
-          # 2. 生成根目录build.gradle（配置项目级依赖）
+          # 3. 生成根目录build.gradle（配置项目级依赖）
           ROOT_BUILD_FILE="$PROJECT_ROOT/build.gradle"
           cat > "$ROOT_BUILD_FILE" << EOF
           buildscript {
@@ -338,7 +355,7 @@ jobs:
                   mavenCentral()
               }
               dependencies {
-                  classpath 'com.android.tools.build:gradle:4.2.2'  // 兼容Gradle 7.0.2
+                  classpath 'com.android.tools.build:gradle:4.2.2'  // 兼容Gradle 7.0.2 + AndroidX
               }
           }
 
@@ -355,7 +372,7 @@ jobs:
           EOF
           [ -f "$ROOT_BUILD_FILE" ] && echo "✅ 生成根目录build.gradle" || { echo "❌ 根目录build.gradle生成失败"; exit 1; }
 
-          # 3. 生成app模块build.gradle（配置应用级依赖和构建参数）
+          # 4. 生成app模块build.gradle（配置应用级依赖和构建参数）
           APP_BUILD_FILE="$PROJECT_ROOT/app/build.gradle"
           cat > "$APP_BUILD_FILE" << EOF
           apply plugin: 'com.android.application'
@@ -370,15 +387,14 @@ jobs:
                   targetSdkVersion 30
                   versionCode 1
                   versionName '${{ env.APP_VERSION }}'
-                  multiDexEnabled true
+                  multiDexEnabled true  // 已启用AndroidX，此配置兼容
               }
 
               buildTypes {
                   release {
                       minifyEnabled false
                       proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-                      // 生成未签名APK（简化流程，如需签名可添加signingConfig）
-                      signingConfig null
+                      signingConfig null  // 生成未签名APK（简化流程）
                   }
               }
 
@@ -393,13 +409,13 @@ jobs:
 
           dependencies {
               implementation project(':CordovaLib')
-              implementation 'androidx.appcompat:appcompat:1.3.1'
-              implementation 'androidx.multidex:multidex:2.0.1'
+              implementation 'androidx.appcompat:appcompat:1.3.1'  // AndroidX依赖
+              implementation 'androidx.multidex:multidex:2.0.1'    // AndroidX依赖
           }
           EOF
           [ -f "$APP_BUILD_FILE" ] && echo "✅ 生成app模块build.gradle" || { echo "❌ app模块build.gradle生成失败"; exit 1; }
 
-          # 4. 生成CordovaLib模块build.gradle（配置依赖库）
+          # 5. 生成CordovaLib模块build.gradle（配置依赖库）
           CORDOVALIB_BUILD_FILE="$PROJECT_ROOT/CordovaLib/build.gradle"
           cat > "$CORDOVALIB_BUILD_FILE" << EOF
           apply plugin: 'com.android.library'
@@ -424,26 +440,28 @@ jobs:
           }
 
           dependencies {
-              implementation 'androidx.appcompat:appcompat:1.3.1'
+              implementation 'androidx.appcompat:appcompat:1.3.1'  // AndroidX依赖
           }
           EOF
           [ -f "$CORDOVALIB_BUILD_FILE" ] && echo "✅ 生成CordovaLib模块build.gradle" || { echo "❌ CordovaLib模块build.gradle生成失败"; exit 1; }
 
-          # 5. 生成proguard-rules.pro（避免混淆核心类）
+          # 6. 生成proguard-rules.pro（避免混淆核心类）
           PROGUARD_FILE="$PROJECT_ROOT/app/proguard-rules.pro"
           cat > "$PROGUARD_FILE" << EOF
           # 保留WebView相关类不被混淆
           -keep public class android.webkit.** { *; }
           # 保留Cordova相关类不被混淆
           -keep public class org.apache.cordova.** { *; }
+          # 保留AndroidX相关类不被混淆（新增）
+          -keep public class androidx.** { *; }
           # 保留应用包名下的类不被混淆
           -keep public class ${{ env.APP_PACKAGE }}.** { *; }
           EOF
-          [ -f "$PROGUARD_FILE" ] && echo "✅ 生成proguard-rules.pro" || { echo "❌ proguard-rules.pro生成失败"; exit 1; }
+          [ -f "$PROGUARD_FILE" ] && echo "✅ 生成proguard-rules.pro（已添加AndroidX混淆规则）" || { echo "❌ proguard-rules.pro生成失败"; exit 1; }
 
           # 验证所有Gradle配置文件
           echo -e "\n📄 生成的Gradle配置文件列表："
-          find "$PROJECT_ROOT" -name "*.gradle" -o -name "settings.gradle" -o -name "proguard-rules.pro"
+          find "$PROJECT_ROOT" -name "*.gradle" -o -name "settings.gradle" -o -name "gradle.properties" -o -name "proguard-rules.pro"
       ########################################################################
       # 步骤7：生成项目核心代码
       ########################################################################
