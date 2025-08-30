@@ -1,3 +1,125 @@
+name: 安卓浏览器式套壳应用构建+自动发版
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: 安装安卓构建依赖
+        run: |
+          export TIMEOUT=300
+          
+          # 替换为阿里云Ubuntu镜像源（解决卡包问题）
+          sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
+          sudo tee /etc/apt/sources.list > /dev/null << EOF
+          deb http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse
+          deb http://mirrors.aliyun.com/ubuntu/ noble-updates main restricted universe multiverse
+          deb http://mirrors.aliyun.com/ubuntu/ noble-backports main restricted universe multiverse
+          deb http://mirrors.aliyun.com/ubuntu/ noble-security main restricted universe multiverse
+          EOF
+          
+          # 安装JDK 11
+          sudo apt-get update -o Acquire::ForceIPv4=true
+          sudo apt-get install -y -qq openjdk-11-jdk
+          echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
+
+          # 配置Android SDK路径
+          ANDROID_SDK_PATH="$HOME/android-sdk"
+          mkdir -p "$ANDROID_SDK_PATH"
+          echo "ANDROID_HOME=$ANDROID_SDK_PATH" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_PATH" >> $GITHUB_ENV
+
+          # 下载SDK Tools
+          SDK_TOOLS_URL="https://mirrors.aliyun.com/android/repository/commandlinetools-linux-9477386_latest.zip"
+          if ! wget --timeout=$TIMEOUT --tries=3 "$SDK_TOOLS_URL" -O sdk-tools.zip; then
+            SDK_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip"
+            wget --timeout=$TIMEOUT --tries=2 "$SDK_TOOLS_URL" -O sdk-tools.zip || exit 1
+          fi
+          mkdir -p "$ANDROID_SDK_PATH/cmdline-tools/latest"
+          unzip -q sdk-tools.zip -d "$ANDROID_SDK_PATH/cmdline-tools/latest"
+          mv "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools/"* "$ANDROID_SDK_PATH/cmdline-tools/latest/" 2>/dev/null || true
+          rm -rf "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools"
+
+          # 接受SDK许可证+安装组件
+          SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/latest/bin/sdkmanager"
+          chmod +x "$SDK_MANAGER"
+          yes | "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" --licenses || true
+          if ! "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https; then
+            "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https || exit 1
+          fi
+
+          # 安装Gradle 7.0.2
+          GRADLE_PATH="$HOME/gradle-7.0.2"
+          if [ ! -d "$GRADLE_PATH" ]; then
+            GRADLE_URL="https://mirrors.aliyun.com/gradle/gradle-7.0.2-bin.zip"
+            if ! wget --timeout=$TIMEOUT --tries=3 "$GRADLE_URL" -O gradle.zip; then
+              GRADLE_URL="https://services.gradle.org/distributions/gradle-7.0.2-bin.zip"
+              wget --timeout=$TIMEOUT --tries=2 "$GRADLE_URL" -O gradle.zip || exit 1
+            fi
+            unzip -q gradle.zip -d "$HOME"
+          fi
+          echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
+          echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
+
+      - name: 读取 config.txt 配置（网址/包名/应用名/版本号）
+        run: |
+          # 定义默认配置（防止 config.txt 缺失）
+          DEFAULT_CUSTOM_URL="https://www.baidu.com"
+          DEFAULT_APP_PACKAGE="com.my.browserapp"
+          DEFAULT_APP_NAME="自定义浏览器"
+          DEFAULT_APP_VERSION_NAME="1.0.0"
+          DEFAULT_APP_VERSION_CODE="1"
+
+          # 读取 config.txt（格式：键=值，每行一个配置）
+          if [ -f "config.txt" ]; then
+            echo "✅ 读取 config.txt 配置..."
+            CUSTOM_URL=$(grep -E "^CUSTOM_URL=" config.txt | cut -d'=' -f2- | sed 's/^[ \t]*//;s/[ \t]*$//' || echo "$DEFAULT_CUSTOM_URL")
+            APP_PACKAGE=$(grep -E "^APP_PACKAGE=" config.txt | cut -d'=' -f2- | sed 's/^[ \t]*//;s/[ \t]*$//' || echo "$DEFAULT_APP_PACKAGE")
+            APP_NAME=$(grep -E "^APP_NAME=" config.txt | cut -d'=' -f2- | sed 's/^[ \t]*//;s/[ \t]*$//' || echo "$DEFAULT_APP_NAME")
+            APP_VERSION_NAME=$(grep -E "^APP_VERSION_NAME=" config.txt | cut -d'=' -f2- | sed 's/^[ \t]*//;s/[ \t]*$//' || echo "$DEFAULT_APP_VERSION_NAME")
+            APP_VERSION_CODE=$(grep -E "^APP_VERSION_CODE=" config.txt | cut -d'=' -f2- | sed 's/^[ \t]*//;s/[ \t]*$//' || echo "$DEFAULT_APP_VERSION_CODE")
+          else
+            echo "⚠️ 未找到 config.txt，使用默认配置..."
+            CUSTOM_URL="$DEFAULT_CUSTOM_URL"
+            APP_PACKAGE="$DEFAULT_APP_PACKAGE"
+            APP_NAME="$DEFAULT_APP_NAME"
+            APP_VERSION_NAME="$DEFAULT_APP_VERSION_NAME"
+            APP_VERSION_CODE="$DEFAULT_APP_VERSION_CODE"
+          fi
+
+          # 验证配置有效性
+          if ! echo "$APP_PACKAGE" | grep -qE '^[a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_]+$'; then
+            echo "⚠️ 包名格式无效，使用默认包名：$DEFAULT_APP_PACKAGE"
+            APP_PACKAGE="$DEFAULT_APP_PACKAGE"
+          fi
+          if ! echo "$APP_VERSION_CODE" | grep -qE '^[0-9]+$'; then
+            echo "⚠️ 版本号必须为整数，使用默认值：$DEFAULT_APP_VERSION_CODE"
+            APP_VERSION_CODE="$DEFAULT_APP_VERSION_CODE"
+          fi
+
+          # 写入环境变量
+          echo "CUSTOM_URL=$CUSTOM_URL" >> $GITHUB_ENV
+          echo "APP_PACKAGE=$APP_PACKAGE" >> $GITHUB_ENV
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          echo "APP_VERSION_NAME=$APP_VERSION_NAME" >> $GITHUB_ENV
+          echo "APP_VERSION_CODE=$APP_VERSION_CODE" >> $GITHUB_ENV
+
+          # 打印最终配置
+          echo -e "\n📋 最终构建配置："
+          echo "目标网址：$CUSTOM_URL"
+          echo "应用包名：$APP_PACKAGE"
+          echo "应用名称：$APP_NAME"
+          echo "版本名称：$APP_VERSION_NAME"
+          echo "版本号（整数）：$APP_VERSION_CODE"
       - name: 构建安卓套壳应用（重构模块，消除循环依赖）
         run: |
           export JAVA_HOME="${{ env.JDK11_PATH }}"
@@ -189,10 +311,8 @@
               }
           }
           EOF
-
           # 3. app模块：主Activity（引用布局资源，调用CordovaLib的工具类）
           cat > "$APP_JAVA_DIR/MainActivity.java" << EOF
-          package $APP_PACKAGE
           package $APP_PACKAGE;
           import android.app.Activity;
           import android.os.Bundle;
@@ -221,7 +341,7 @@
                   webViewHelper.setWebViewClient();  // 设置WebViewClient（控制加载动画）
                   
                   // 加载目标网址（从config.txt读取的配置）
-                  webViewHelper.loadUrl("${CUSTOM_URL}");
+                  webViewHelper.loadUrl("$CUSTOM_URL");
               }
               
               // 返回键后退逻辑（通过工具类获取WebView实例）
@@ -261,31 +381,36 @@
           }
           EOF
 
-          # 4. 生成清单文件（AndroidManifest.xml）- 保持原有配置
+          # 4. 生成清单文件（AndroidManifest.xml）- 配置权限与启动页
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
                     package="$APP_PACKAGE">
+              <!-- 配置支持的SDK版本：兼容Android 5.0+（API 21） -->
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
               
+              <!-- 申请必要权限：网络访问、网络状态获取 -->
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
               
               <application
-                  android:label="$APP_NAME"
-                  android:theme="@style/AppTheme"
-                  android:hardwareAccelerated="true"
-                  android:usesCleartextTraffic="true">
+                  android:label="$APP_NAME"  // 应用名称（来自config.txt）
+                  android:theme="@style/AppTheme"  // 应用主题（无标题栏）
+                  android:hardwareAccelerated="true"  // 启用硬件加速（优化WebView性能）
+                  android:usesCleartextTraffic="true">  // 允许HTTP明文请求（解决混合内容问题）
                   
+                  <!-- 主Activity配置：启动页+支持链接跳转 -->
                   <activity 
                       android:name=".MainActivity"
-                      android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"
-                      android:launchMode="singleTask">
+                      android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"  // 横竖屏切换不重建Activity
+                      android:launchMode="singleTask">  // 单任务模式（避免多实例）
+                      <!-- 配置为启动页 -->
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
+                      <!-- 支持HTTP/HTTPS链接跳转 -->
                       <intent-filter>
                           <action android:name="android.intent.action.VIEW"/>
                           <category android:name="android.intent.category.DEFAULT"/>
@@ -298,66 +423,78 @@
           </manifest>
           EOF
 
-          # 5. 生成字符串资源（strings.xml）- 保持原有配置
+          # 5. 生成字符串资源（strings.xml）- 定义应用名称与主题
           cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
+              <!-- 应用名称（与Manifest一致） -->
               <string name="app_name">$APP_NAME</string>
+              <!-- 应用主题：继承无标题栏主题（避免顶部标题栏遮挡） -->
               <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
           </resources>
           EOF
 
-          # 6. 生成Gradle基础配置（gradle.properties）- 保持原有配置
+          # 6. 生成Gradle基础配置（gradle.properties）- 优化构建参数
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
-          # 启用AndroidX支持
+          # 启用AndroidX支持（适配现代Android库）
           android.useAndroidX=true
+          # 关闭Jetifier（无需兼容旧Support库）
           android.enableJetifier=false
           
-          # 配置Gradle内存（避免OOM）
+          # 配置Gradle内存：1.5GB（避免构建时OOM内存溢出）
           org.gradle.jvmargs=-Xmx1536m
           
-          # 启用并行构建（加速）
+          # 启用并行构建（同时构建多个模块，加速构建）
           org.gradle.parallel=true
+          # 启用构建缓存（复用已构建内容，减少重复编译）
+          org.gradle.caching=true
           EOF
-
-          # 7. 生成模块依赖配置（settings.gradle）- 保持原有逻辑
+          # 7. 生成模块依赖配置（settings.gradle）- 声明项目包含的模块
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
+          // 声明项目包含app（主应用模块）和CordovaLib（库模块）
           include ':app', ':CordovaLib'
           EOF
 
-          # 8. 生成 CordovaLib 库模块配置（build.gradle）- 移除对app的依赖，消除循环
+          # 8. 生成 CordovaLib 库模块配置（build.gradle）- 仅依赖通用库，无循环
           cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           buildscript {
               repositories {
+                  // 优先使用阿里云镜像（加速依赖下载）
                   maven { url 'https://maven.aliyun.com/repository/google' }
                   maven { url 'https://maven.aliyun.com/repository/public' }
-                  mavenCentral()
+                  mavenCentral()  // 备用中央仓库
               }
               dependencies {
+                  // 指定Android Gradle插件版本（与Gradle 7.0.2兼容）
                   classpath 'com.android.tools.build:gradle:7.0.4'
               }
           }
+          // 声明为库模块（非应用模块）
           apply plugin: 'com.android.library'
           
           android {
-              compileSdk 30
-              namespace 'org.apache.cordova'  // 明确库模块命名空间
+              compileSdk 30  // 编译SDK版本（与app模块一致，避免兼容性问题）
+              namespace 'org.apache.cordova'  // 明确库模块命名空间（防止冲突）
               
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/google' }
                   maven { url 'https://maven.aliyun.com/repository/public' }
               }
               
-              lintOptions { abortOnError false }  // 忽略lint错误（避免构建中断）
+              // 忽略lint错误（避免因非致命问题中断构建）
+              lintOptions {
+                  abortOnError false
+                  disable 'UnusedResources'  // 忽略未使用资源的警告
+              }
           }
           
           dependencies {
-              // 仅依赖通用库，不依赖app模块（消除循环依赖）
+              // 仅依赖通用AndroidX库（无app模块依赖，消除循环）
               implementation 'androidx.appcompat:appcompat:1.0.2'
           }
           EOF
 
-          # 9. 生成主应用模块配置（build.gradle）- 仅app依赖CordovaLib，单向依赖
+          # 9. 生成主应用模块配置（build.gradle）- 单向依赖CordovaLib
           cat > "$APP_DIR/build.gradle" << EOF
           buildscript {
               repositories {
@@ -368,29 +505,34 @@
                   classpath 'com.android.tools.build:gradle:7.0.4'
               }
           }
+          // 声明为主应用模块（可生成APK）
           apply plugin: 'com.android.application'
           
           android {
               compileSdk 30
-              namespace '$APP_PACKAGE'  // 明确应用模块命名空间
+              namespace '$APP_PACKAGE'  // 应用模块命名空间（与包名一致）
               
               defaultConfig {
-                  applicationId "$APP_PACKAGE"
-                  minSdk 21
-                  targetSdk 30
-                  versionCode $APP_VERSION_CODE
-                  versionName "$APP_VERSION_NAME"
+                  applicationId "$APP_PACKAGE"  // 应用唯一标识（包名）
+                  minSdk 21  // 最低支持Android 5.0
+                  targetSdk 30  // 目标编译Android版本
+                  versionCode $APP_VERSION_CODE  // 版本号（整数，用于升级判断）
+                  versionName "$APP_VERSION_NAME"  // 版本名称（显示给用户）
               }
               
               buildTypes {
                   release {
-                      minifyEnabled false  // 关闭混淆（简化调试）
-                      signingConfig signingConfigs.debug  // 使用调试签名（便于测试安装）
+                      minifyEnabled false  // 关闭代码混淆（简化调试，测试用）
+                      // 使用调试签名（无需手动配置签名文件，便于测试安装）
+                      signingConfig signingConfigs.debug
+                      // 混淆规则文件（即使关闭混淆，保留配置便于后续扩展）
                       proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
                   }
               }
               
-              lintOptions { abortOnError false }  // 忽略lint错误（避免构建中断）
+              lintOptions {
+                  abortOnError false  // 忽略lint错误，避免构建中断
+              }
               
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/google' }
@@ -399,15 +541,16 @@
           }
           
           dependencies {
-              // 仅app依赖CordovaLib，单向依赖（无循环）
+              // 仅app模块依赖CordovaLib库（单向依赖，无循环）
               implementation project(':CordovaLib')
+              // 应用模块自身依赖的AndroidX库
               implementation 'androidx.appcompat:appcompat:1.0.2'
           }
           EOF
 
-          # 10. 生成混淆规则（proguard-rules.pro）- 仅保留app模块的R资源
+          # 10. 生成混淆规则（proguard-rules.pro）- 保护关键类与资源
           cat > "$APP_DIR/proguard-rules.pro" << EOF
-          # 保留WebView相关类（避免混淆导致功能失效）
+          # 保护WebView相关类（避免混淆导致WebView功能失效）
           -keepclassmembers class * extends android.webkit.WebViewClient {
               public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
               public boolean *(android.webkit.WebView, java.lang.String);
@@ -415,96 +558,114 @@
           -keepclassmembers class * extends android.webkit.WebChromeClient {
               public void *(android.webkit.WebView, java.lang.String);
           }
-          # 保留app模块的R资源（避免混淆导致资源引用错误）
+          
+          # 保护app模块的R资源类（避免混淆导致资源引用错误）
           -keep class $APP_PACKAGE.R { *; }
-          -keep class $APP_PACKAGE.R$layout { *; }
-          -keep class $APP_PACKAGE.R$id { *; }
+          -keep class $APP_PACKAGE.R$layout { *; }  // 保护布局资源类
+          -keep class $APP_PACKAGE.R$id { *; }      // 保护控件ID资源类
+          -keep class $APP_PACKAGE.R$string { *; }  // 保护字符串资源类
+          
+          # 保护CordovaLib的工具类（避免混淆导致调用失败）
+          -keep class org.apache.cordova.WebViewHelper { *; }
+          -keepclassmembers class org.apache.cordova.WebViewHelper {
+              public <init>(android.content.Context, android.webkit.WebView, android.widget.LinearLayout);
+              public void setWebViewClient();
+              public void loadUrl(java.lang.String);
+              public android.webkit.WebView getWebView();
+          }
           EOF
           # 11. 编译 Release 版本 APK（增加日志输出，便于问题定位）
           echo "=== 开始编译 Release 版本 APK ==="
-          cd "$ANDROID_ROOT" || exit 1  # 进入项目根目录
+          cd "$ANDROID_ROOT" || exit 1  # 进入项目根目录，确保后续命令生效
           
-          # 生成 Gradle 包装器（确保版本一致性）
+          # 生成 Gradle 包装器（统一 Gradle 版本，避免环境差异）
           gradle wrapper --gradle-version 7.0.2
-          chmod +x gradlew  # 赋予执行权限
+          chmod +x gradlew  # 赋予包装器执行权限（避免权限不足导致失败）
           
-          # 执行清理与编译（--stacktrace+--info 输出详细日志，便于排查错误）
+          # 执行清理与编译：先清理旧构建产物，再编译Release APK
+          # --stacktrace：输出异常堆栈信息；--info：输出详细构建日志，便于排查错误
           ./gradlew clean :app:assembleRelease --stacktrace --info
           
-          # 检查 APK 是否生成成功，并复制到指定路径（含版本号，便于识别）
-          APK_SOURCE1="$APP_DIR/build/outputs/apk/release/app-release.apk"
-          APK_SOURCE2="$APP_DIR/build/outputs/apk/release/app-release-unsigned.apk"
+          # 检查 APK 是否生成成功，并复制到统一路径（含版本号，便于识别）
+          # 可能的 APK 路径（根据构建配置，存在已签名/未签名两种情况）
+          APK_SOURCE_SIGNED="$APP_DIR/build/outputs/apk/release/app-release.apk"
+          APK_SOURCE_UNSIGNED="$APP_DIR/build/outputs/apk/release/app-release-unsigned.apk"
+          # 目标路径：含版本号（如 CustomBrowser-v1.0.0.apk），便于 Releases 识别
           APK_DEST="/home/runner/work/webview-app/webview-app/CustomBrowser-v$APP_VERSION_NAME.apk"
           
-          if [ -f "$APK_SOURCE1" ]; then
-            cp "$APK_SOURCE1" "$APK_DEST"
-            echo "✅ 找到已签名 APK，复制路径：$APK_DEST"
-          elif [ -f "$APK_SOURCE2" ]; then
-            cp "$APK_SOURCE2" "$APK_DEST"
-            echo "✅ 找到未签名 APK，复制路径：$APK_DEST"
+          # 优先使用已签名 APK，无则使用未签名 APK
+          if [ -f "$APK_SOURCE_SIGNED" ]; then
+            cp "$APK_SOURCE_SIGNED" "$APK_DEST"
+            echo "✅ 找到已签名 APK，复制完成：$APK_DEST"
+          elif [ -f "$APK_SOURCE_UNSIGNED" ]; then
+            cp "$APK_SOURCE_UNSIGNED" "$APK_DEST"
+            echo "✅ 找到未签名 APK，复制完成：$APK_DEST"
           else
-            echo "❌ 未找到 APK 文件，输出构建目录结构用于排查："
-            ls -R "$APP_DIR/build/outputs"  # 打印输出目录结构，协助定位问题
+            echo "❌ 未找到 APK 文件，输出构建目录结构用于排查问题："
+            ls -R "$APP_DIR/build/outputs"  # 打印输出目录所有文件，协助定位问题
             exit 1  # 构建失败，终止工作流
           fi
 
-      - name: 创建并推送 Git Tag（与版本号关联，标记修复）
+      - name: 创建并推送 Git Tag（与版本号关联，标记构建版本）
         run: |
-          # 从环境变量获取版本号（来自 config.txt）
+          # 从环境变量获取版本号（来自 config.txt 或默认配置）
           APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
-          TAG_NAME="v$APP_VERSION_NAME"  # Tag 格式：v1.0.0（含修复标识）
+          TAG_NAME="v$APP_VERSION_NAME"  # Tag 格式：v1.0.0（符合语义化版本规范）
           
-          # 配置 Git 身份（用于提交 Tag）
+          # 配置 Git 身份（用于提交 Tag，GitHub Actions 需显式配置）
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
-          # 若 Tag 已存在，先删除旧 Tag（避免版本冲突）
+          # 若 Tag 已存在，先删除旧 Tag（避免版本冲突，确保新 Tag 生效）
           if git rev-parse --verify --quiet "$TAG_NAME"; then
-            echo "⚠️ Tag $TAG_NAME 已存在，删除旧 Tag..."
-            git tag -d "$TAG_NAME"  # 删除本地 Tag
-            git push origin --delete "$TAG_NAME" 2>/dev/null || true  # 删除远程 Tag（忽略失败）
+            echo "⚠️ Tag $TAG_NAME 已存在，删除旧 Tag 并重新创建..."
+            git tag -d "$TAG_NAME"  # 删除本地旧 Tag
+            git push origin --delete "$TAG_NAME" 2>/dev/null || true  # 删除远程旧 Tag（忽略删除失败）
           fi
           
-          # 创建新 Tag 并推送（注明消除循环依赖）
-          git tag -a "$TAG_NAME" -m "自定义浏览器应用 $TAG_NAME（消除模块循环依赖）"
+          # 创建新 Tag 并添加描述（注明修复内容，便于追溯）
+          git tag -a "$TAG_NAME" -m "自定义浏览器应用 $TAG_NAME（修复模块循环依赖，支持加载动画）"
+          # 推送 Tag 到远程仓库
           if ! git push origin "$TAG_NAME"; then
             echo "⚠️ Tag 推送失败，重试一次..."
-            git push origin "$TAG_NAME" || exit 1  # 重试失败则终止
+            git push origin "$TAG_NAME" || exit 1  # 重试失败则终止，避免无效构建
           fi
-          echo "✅ Git Tag 推送成功：$TAG_NAME"
+          echo "✅ Git Tag 推送成功：$TAG_NAME（可在仓库 Tags 页面查看）"
 
-      - name: 发布 APK 到 GitHub Releases（说明修复内容）
-        uses: softprops/action-gh-release@v2  # 成熟的 Releases 发布工具
+      - name: 发布 APK 到 GitHub Releases（自动生成下载链接，便于分发）
+        uses: softprops/action-gh-release@v2  # 成熟的 GitHub Releases 发布工具（社区广泛使用）
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 自动注入的仓库令牌（无需手动配置）
+          # GitHub 自动注入的仓库令牌，无需手动配置（需开启 Workflow 权限）
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: "v${{ env.APP_VERSION_NAME }}"  # 与 Git Tag 保持一致
-          name: "自定义浏览器应用 v${{ env.APP_VERSION_NAME }}（修复循环依赖）"  # 标题注明修复
-          body: |  # Releases 描述（重点说明修复内容）
-            ### 应用信息
+          tag_name: "v${{ env.APP_VERSION_NAME }}"  # 与 Git Tag 保持一致，关联版本
+          name: "自定义浏览器应用 v${{ env.APP_VERSION_NAME }}（修复版）"  # Releases 标题，注明版本
+          # Releases 描述（详细说明功能、修复内容和注意事项，便于用户理解）
+          body: |
+            ### 📱 应用信息
             - 应用名称：${{ env.APP_NAME }}
             - 应用包名：${{ env.APP_PACKAGE }}
             - 支持系统：Android 5.0+（API 21 及以上）
             - 构建版本：v${{ env.APP_VERSION_NAME }}（版本号：${{ env.APP_VERSION_CODE }}）
-            - 构建时间：${{ github.run_at }}
-            - 修复内容：**消除 app ↔ CordovaLib 模块循环依赖**，解决构建失败问题
+            - 构建时间：${{ github.run_at }}（UTC 时间）
+            - 核心修复：**彻底消除 app ↔ CordovaLib 模块循环依赖**，解决构建失败问题
             
-            ### 核心功能
-            1. 加载目标网址：${{ env.CUSTOM_URL }}
-            2. 网页加载时显示 **圆形进度条+“加载中...”文字**，解决白屏问题
-            3. 支持网页内跳转、缩放、JS 交互
-            4. 解决混合内容（HTTP/HTTPS）加载问题
-            5. 支持返回键网页后退
-            6. 加载超时（80秒）自动关闭页面
+            ### ✨ 核心功能
+            1. 加载目标网址：${{ env.CUSTOM_URL }}（可通过 config.txt 自定义）
+            2. 网页加载动画：显示圆形进度条+“加载中...”文字，解决白屏问题
+            3. 基础浏览器功能：支持网页跳转、缩放、JS 交互、返回键后退
+            4. 兼容性优化：支持 HTTP/HTTPS 混合内容加载，忽略 SSL 证书错误
+            5. 超时保护：网页加载超过 80 秒自动提示并关闭，避免卡死
             
-            ### 技术优化
-            - 重构模块结构：CordovaLib 仅提供通用 WebView 工具类，不依赖 app 资源
-            - 资源引用优化：仅 app 模块操作 R 资源，通过构造方法传入控件实例
-            - 依赖关系：app 单向依赖 CordovaLib，无循环依赖
+            ### 📥 下载方式
+            点击下方 “Assets” 中的 APK 文件即可下载，直接安装到 Android 设备
             
-            ### 注意事项
-            - 此 APK 为调试签名版本，可直接安装测试
-            - 生产环境使用需替换为正式签名
-          files: /home/runner/work/webview-app/webview-app/CustomBrowser-v${{ env.APP_VERSION_NAME }}.apk  # 待上传的 APK 路径
-          draft: false  # 不设为草稿（直接发布）
-          prerelease: false  # 不设为预发布（标记为正式版本）
+            ### ⚠️ 注意事项
+            - 此 APK 为 **调试签名版本**，适合测试使用；生产环境需替换为正式签名
+            - 若安装失败，检查设备是否开启 “未知来源应用安装” 权限
+            - 如需修改网址/包名/应用名，在仓库根目录创建 config.txt 配置文件即可
+
+          # 上传 APK 文件（对应之前复制的目标路径）
+          files: /home/runner/work/webview-app/webview-app/CustomBrowser-v${{ env.APP_VERSION_NAME }}.apk
+          draft: false  # 不设为草稿，直接发布（如需审核，可改为 true）
+          prerelease: false  # 不设为预发布版本，标记为正式版（测试版可改为 true）
