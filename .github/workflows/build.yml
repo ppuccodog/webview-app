@@ -463,7 +463,7 @@ jobs:
           echo -e "\n📄 生成的Gradle配置文件列表："
           find "$PROJECT_ROOT" -name "*.gradle" -o -name "settings.gradle" -o -name "gradle.properties" -o -name "proguard-rules.pro"
       ########################################################################
-      # 步骤7：生成项目核心代码（添加默认应用图标资源）
+      # 步骤7：生成项目核心代码（修正矢量图标XML语法）
       ########################################################################
       - name: 生成项目核心代码
         run: |
@@ -617,12 +617,12 @@ jobs:
             exit 1
           fi
 
-          # 4. 新增：生成默认应用图标（mipmap/ic_launcher）
+          # 4. 生成默认应用图标（mipmap/ic_launcher）- 修正XML语法
           # 创建mipmap资源目录（适配不同分辨率）
           MIPMAP_DIR="${{ env.PROJECT_ROOT }}/app/src/main/res/mipmap-anydpi-v26"
           mkdir -p "$MIPMAP_DIR" || { echo "❌ 创建mipmap目录失败"; exit 1; }
           
-          # 生成矢量图标XML（简单的圆形图标）
+          # 核心修正：1. 补充android:name属性 2. 确保属性值双引号闭合 3. 移除多余空格
           LAUNCHER_ICON="$MIPMAP_DIR/ic_launcher.xml"
           cat > "$LAUNCHER_ICON" << EOF
           <?xml version="1.0" encoding="utf-8"?>
@@ -631,8 +631,10 @@ jobs:
               android:height="24dp"
               android:viewportWidth="24.0"
               android:viewportHeight="24.0">
+              <!-- 补充android:name属性（Android矢量图规范要求），确保所有属性双引号闭合 -->
               <path
-                  android:fillColor="#FF0000"  <!-- 红色圆形作为默认图标 -->
+                  android:name="icon_shape"
+                  android:fillColor="#FF0000"
                   android:pathData="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2z" />
           </vector>
           EOF
@@ -640,12 +642,15 @@ jobs:
           # 验证图标是否生成成功
           if [ -f "$LAUNCHER_ICON" ] && [ -s "$LAUNCHER_ICON" ]; then
             echo "✅ 生成默认应用图标：$LAUNCHER_ICON"
+            # 输出图标内容供调试（确认语法正确性）
+            echo "📄 图标XML内容："
+            cat "$LAUNCHER_ICON"
           else
             echo "❌ 应用图标生成失败"
             exit 1
           fi
 
-          # 5. 新增：生成字符串资源（解决app_name引用）
+          # 5. 生成字符串资源（解决app_name引用）
           VALUES_DIR="${{ env.PROJECT_ROOT }}/app/src/main/res/values"
           mkdir -p "$VALUES_DIR" || { echo "❌ 创建values目录失败"; exit 1; }
           STRINGS_FILE="$VALUES_DIR/strings.xml"
@@ -660,6 +665,30 @@ jobs:
             echo "✅ 生成字符串资源：$STRINGS_FILE"
           else
             echo "❌ 字符串资源生成失败"
+            exit 1
+          fi
+
+          # 6. 新增：生成主题资源（解决AppTheme引用）
+          # 之前未生成theme资源，可能导致后续主题引用错误，提前补充
+          STYLES_FILE="$VALUES_DIR/styles.xml"
+          cat > "$STYLES_FILE" << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <!-- 定义默认主题，匹配AndroidManifest中的@style/AppTheme -->
+              <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+                  <item name="windowNoTitle">true</item>
+                  <item name="windowActionBar">false</item>
+                  <item name="colorPrimary">#FF0000</item>
+                  <item name="colorPrimaryDark">#CC0000</item>
+                  <item name="colorAccent">#FF0000</item>
+              </style>
+          </resources>
+          EOF
+          
+          if [ -f "$STYLES_FILE" ] && [ -s "$STYLES_FILE" ]; then
+            echo "✅ 生成主题资源：$STYLES_FILE"
+          else
+            echo "❌ 主题资源生成失败"
             exit 1
           fi
       ########################################################################
