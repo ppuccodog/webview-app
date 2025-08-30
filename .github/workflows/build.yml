@@ -105,7 +105,8 @@ jobs:
           # 配置环境变量
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
-		        ########################################################################
+
+      ########################################################################
       # 步骤3：解析配置文件（读取应用信息）
       ########################################################################
       - name: 解析配置文件
@@ -222,7 +223,8 @@ jobs:
             echo "❌ 图标目录创建失败，终止构建"
             exit 1
           fi
-		        ########################################################################
+
+      ########################################################################
       # 步骤5：生成应用图标和资源文件
       ########################################################################
       - name: 生成应用图标和资源文件
@@ -311,7 +313,7 @@ jobs:
         run: |
           # 生成CordovaActivity（核心页面逻辑）
           CORDOVA_ACTIVITY="${{ env.PROJECT_ROOT }}/CordovaLib/src/main/java/org/apache/cordova/CordovaActivity.java"
-          cat > "$CORDOVA_ACTIVITY" << EOF
+          cat > "$CORDOVA_ACTIVITY" << 'EOF'
           package org.apache.cordova;
           import android.app.Activity;
           import android.os.Bundle;
