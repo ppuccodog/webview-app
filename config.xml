@@ -1,7 +1,0 @@
-<?xml version="1.0"?>
-<widget id="com.yjsyy.customapp" version="1.0.1">
-  <name>YJSYY_CSDH</name>
-  <platform name="android">
-    <preference name="LoadUrlTimeoutValue" value="80000" />
-  </platform>
-</widget>
