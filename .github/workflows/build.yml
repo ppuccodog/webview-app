@@ -69,7 +69,6 @@ jobs:
           fi
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
-
       - name: 读取 config.txt 配置（网址/包名/应用名/版本号）
         run: |
           # 定义默认配置（防止 config.txt 缺失）
@@ -120,7 +119,8 @@ jobs:
           echo "应用名称：$APP_NAME"
           echo "版本名称：$APP_VERSION_NAME"
           echo "版本号（整数）：$APP_VERSION_CODE"
-      - name: 构建安卓套壳应用（重构模块，消除循环依赖）
+
+      - name: 构建安卓套壳应用（初始化项目结构）
         run: |
           export JAVA_HOME="${{ env.JDK11_PATH }}"
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
@@ -143,57 +143,108 @@ jobs:
           APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"
           # 布局资源放在app模块（CordovaLib不再依赖）
           APP_LAYOUT_DIR="$APP_DIR/src/main/res/layout"
+          # 图片/动画资源目录
+          APP_DRAWABLE_DIR="$APP_DIR/src/main/res/drawable"
           
           # 清理旧项目残留并创建新目录
           rm -rf "$PROJECT_PATH"
           mkdir -p "$APP_JAVA_DIR"
           mkdir -p "$APP_LAYOUT_DIR"
+          mkdir -p "$APP_DRAWABLE_DIR"
           mkdir -p "$APP_DIR/src/main/res/values"
           mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
-
-          # 1. 生成加载动画布局（activity_main.xml）- 放在app模块
+          # 生成主布局文件（带优化的加载动画）
           cat > "$APP_LAYOUT_DIR/activity_main.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
               android:layout_height="match_parent">
-              
+
               <!-- WebView：加载目标网页 -->
               <WebView
                   android:id="@+id/webview"
                   android:layout_width="match_parent"
                   android:layout_height="match_parent"/>
-              
-              <!-- 加载动画：网页加载完成前显示 -->
+
+              <!-- 加载动画容器：渐变背景+居中布局 -->
               <LinearLayout
                   android:id="@+id/loading_layout"
                   android:layout_width="match_parent"
                   android:layout_height="match_parent"
                   android:gravity="center"
                   android:orientation="vertical"
-                  android:background="#FFFFFF">
-                  
-                  <!-- 圆形进度条（兼容低版本） -->
+                  android:background="@drawable/loading_bg_gradient">
+
+                  <!-- 自定义圆形旋转进度条 -->
                   <ProgressBar
                       android:id="@+id/loading_progress"
-                      android:layout_width="50dp"
-                      android:layout_height="50dp"
+                      android:layout_width="60dp"
+                      android:layout_height="60dp"
                       android:indeterminate="true"
-                      android:indeterminateDrawable="@android:drawable/progress_indeterminate_horizontal"/>
-                  
-                  <!-- 加载提示文字 -->
+                      android:indeterminateDrawable="@drawable/loading_circle" />
+
+                  <!-- 加载文字：加粗+大字号 -->
                   <TextView
                       android:layout_width="wrap_content"
                       android:layout_height="wrap_content"
-                      android:layout_marginTop="15dp"
+                      android:layout_marginTop="20dp"
                       android:text="加载中..."
-                      android:textSize="16sp"
-                      android:textColor="#333333"/>
+                      android:textSize="18sp"
+                      android:textColor="#333333"
+                      android:textStyle="bold" />
+
               </LinearLayout>
           </RelativeLayout>
           EOF
 
-          # 2. CordovaLib模块：仅提供通用WebView工具类（无资源依赖）
+          # 生成加载动画渐变背景
+          cat > "$APP_DRAWABLE_DIR/loading_bg_gradient.xml" << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android"
+              android:shape="rectangle">
+              <gradient
+                  android:angle="90"
+                  android:centerColor="#F8F8F8"
+                  android:endColor="#FFFFFF"
+                  android:startColor="#F0F0F0"
+                  android:type="linear" />
+          </shape>
+          EOF
+
+          # 生成自定义圆形加载动画
+          cat > "$APP_DRAWABLE_DIR/loading_circle.xml" << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <animated-rotate xmlns:android="http://schemas.android.com/apk/res/android"
+              android:duration="1200"
+              android:fromDegrees="0"
+              android:pivotX="50%"
+              android:pivotY="50%"
+              android:toDegrees="360">
+
+              <shape
+                  android:innerRadius="20dp"
+                  android:shape="ring"
+                  android:thickness="6dp"
+                  android:useLevel="false">
+
+                  <gradient
+                      android:centerColor="#40C4FF"
+                      android:endColor="#00BFA5"
+                      android:startColor="#2196F3"
+                      android:type="sweep" />
+              </shape>
+          </animated-rotate>
+          EOF
+
+          # 生成字符串资源文件
+          cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">$APP_NAME</string>
+              <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
+          </resources>
+          EOF
+          # 生成CordovaLib模块的WebView工具类
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/WebViewHelper.java" << EOF
           package org.apache.cordova;
           import android.content.Context;
@@ -311,16 +362,17 @@ jobs:
               }
           }
           EOF
-          # 3. app模块：主Activity（引用布局资源，调用CordovaLib的工具类）
+
+          # 生成app模块的主Activity
           cat > "$APP_JAVA_DIR/MainActivity.java" << EOF
           package $APP_PACKAGE;
           import android.app.Activity;
           import android.os.Bundle;
           import android.webkit.WebView;
           import android.widget.LinearLayout;
-          // 导入CordovaLib的通用工具类（无资源依赖）
+          // 导入CordovaLib的通用工具类
           import org.apache.cordova.WebViewHelper;
-          // 仅在app模块引用R资源（CordovaLib不再依赖）
+          // 引用app模块的R资源
           import $APP_PACKAGE.R;
 
           public class MainActivity extends Activity {
@@ -329,22 +381,22 @@ jobs:
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  // 加载app模块的布局资源（activity_main.xml）
+                  // 加载app模块的布局资源
                   setContentView(R.layout.activity_main);
                   
-                  // 从布局中获取WebView和加载动画控件（仅在app模块操作R资源）
+                  // 从布局中获取WebView和加载动画控件
                   WebView webView = findViewById(R.id.webview);
                   LinearLayout loadingLayout = findViewById(R.id.loading_layout);
                   
-                  // 初始化CordovaLib的工具类：传入Context、WebView、加载布局（消除循环依赖）
+                  // 初始化CordovaLib的工具类
                   webViewHelper = new WebViewHelper(this, webView, loadingLayout);
-                  webViewHelper.setWebViewClient();  // 设置WebViewClient（控制加载动画）
+                  webViewHelper.setWebViewClient();  // 设置WebViewClient
                   
-                  // 加载目标网址（从config.txt读取的配置）
+                  // 加载目标网址
                   webViewHelper.loadUrl("$CUSTOM_URL");
               }
               
-              // 返回键后退逻辑（通过工具类获取WebView实例）
+              // 返回键后退逻辑
               @Override
               public void onBackPressed() {
                   if (webViewHelper != null && webViewHelper.getWebView().canGoBack()) {
@@ -354,7 +406,7 @@ jobs:
                   }
               }
               
-              // 页面生命周期处理（通过工具类获取WebView实例）
+              // 页面生命周期处理
               @Override
               protected void onPause() {
                   super.onPause();
@@ -380,28 +432,26 @@ jobs:
               }
           }
           EOF
-
-          # 4. 生成清单文件（AndroidManifest.xml）- 配置权限与启动页（修复XML格式错误）
+          # 生成AndroidManifest.xml清单文件
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
                     package="$APP_PACKAGE">
-              <!-- 配置支持的SDK版本：兼容Android 5.0+（API 21） -->
+              <!-- 配置支持的SDK版本 -->
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
               
-              <!-- 申请必要权限：网络访问、网络状态获取 -->
+              <!-- 申请必要权限 -->
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
               
-              <!-- 修复：移除属性后多余注释，确保标签语法正确 -->
               <application
                   android:label="$APP_NAME"
                   android:theme="@style/AppTheme"
                   android:hardwareAccelerated="true"
                   android:usesCleartextTraffic="true">
                   
-                  <!-- 主Activity配置：启动页+支持链接跳转 -->
+                  <!-- 主Activity配置 -->
                   <activity 
                       android:name=".MainActivity"
                       android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"
@@ -420,82 +470,65 @@ jobs:
                           <data android:scheme="https"/>
                       </intent-filter>
                   </activity>
-              </application> <!-- 确保application标签正确闭合 -->
+              </application>
           </manifest>
           EOF
 
-          # 5. 生成字符串资源（strings.xml）- 定义应用名称与主题
-          cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <!-- 应用名称（与Manifest一致） -->
-              <string name="app_name">$APP_NAME</string>
-              <!-- 应用主题：继承无标题栏主题（避免顶部标题栏遮挡） -->
-              <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
-          </resources>
-          EOF
-
-          # 6. 生成Gradle基础配置（gradle.properties）- 优化构建参数
+          # 生成Gradle基础配置
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
-          # 启用AndroidX支持（适配现代Android库）
+          # 启用AndroidX支持
           android.useAndroidX=true
-          # 关闭Jetifier（无需兼容旧Support库）
+          # 关闭Jetifier
           android.enableJetifier=false
           
-          # 配置Gradle内存：1.5GB（避免构建时OOM内存溢出）
+          # 配置Gradle内存
           org.gradle.jvmargs=-Xmx1536m
           
-          # 启用并行构建（同时构建多个模块，加速构建）
+          # 启用并行构建
           org.gradle.parallel=true
-          # 启用构建缓存（复用已构建内容，减少重复编译）
+          # 启用构建缓存
           org.gradle.caching=true
           EOF
-          # 7. 生成模块依赖配置（settings.gradle）- 声明项目包含的模块
+
+          # 生成模块依赖配置
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
-          // 声明项目包含app（主应用模块）和CordovaLib（库模块）
           include ':app', ':CordovaLib'
           EOF
 
-          # 8. 生成 CordovaLib 库模块配置（build.gradle）- 仅依赖通用库，无循环
+          # 生成CordovaLib库模块配置
           cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           buildscript {
               repositories {
-                  // 优先使用阿里云镜像（加速依赖下载）
                   maven { url 'https://maven.aliyun.com/repository/google' }
                   maven { url 'https://maven.aliyun.com/repository/public' }
-                  mavenCentral()  // 备用中央仓库
+                  mavenCentral()
               }
               dependencies {
-                  // 指定Android Gradle插件版本（与Gradle 7.0.2兼容）
                   classpath 'com.android.tools.build:gradle:7.0.4'
               }
           }
-          // 声明为库模块（非应用模块）
           apply plugin: 'com.android.library'
           
           android {
-              compileSdk 30  // 编译SDK版本（与app模块一致，避免兼容性问题）
-              namespace 'org.apache.cordova'  // 明确库模块命名空间（防止冲突）
+              compileSdk 30
+              namespace 'org.apache.cordova'
               
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/google' }
                   maven { url 'https://maven.aliyun.com/repository/public' }
               }
               
-              // 忽略lint错误（避免因非致命问题中断构建）
               lintOptions {
                   abortOnError false
-                  disable 'UnusedResources'  // 忽略未使用资源的警告
+                  disable 'UnusedResources'
               }
           }
           
           dependencies {
-              // 仅依赖通用AndroidX库（无app模块依赖，消除循环）
               implementation 'androidx.appcompat:appcompat:1.0.2'
           }
           EOF
-
-          # 9. 生成主应用模块配置（build.gradle）- 单向依赖CordovaLib
+          # 生成主应用模块配置
           cat > "$APP_DIR/build.gradle" << EOF
           buildscript {
               repositories {
@@ -506,33 +539,30 @@ jobs:
                   classpath 'com.android.tools.build:gradle:7.0.4'
               }
           }
-          // 声明为主应用模块（可生成APK）
           apply plugin: 'com.android.application'
           
           android {
               compileSdk 30
-              namespace '$APP_PACKAGE'  // 应用模块命名空间（与包名一致）
+              namespace '$APP_PACKAGE'
               
               defaultConfig {
-                  applicationId "$APP_PACKAGE"  // 应用唯一标识（包名）
-                  minSdk 21  // 最低支持Android 5.0
-                  targetSdk 30  // 目标编译Android版本
-                  versionCode $APP_VERSION_CODE  // 版本号（整数，用于升级判断）
-                  versionName "$APP_VERSION_NAME"  // 版本名称（显示给用户）
+                  applicationId "$APP_PACKAGE"
+                  minSdk 21
+                  targetSdk 30
+                  versionCode $APP_VERSION_CODE
+                  versionName "$APP_VERSION_NAME"
               }
               
               buildTypes {
                   release {
-                      minifyEnabled false  // 关闭代码混淆（简化调试，测试用）
-                      // 使用调试签名（无需手动配置签名文件，便于测试安装）
+                      minifyEnabled false
                       signingConfig signingConfigs.debug
-                      // 混淆规则文件（即使关闭混淆，保留配置便于后续扩展）
                       proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
                   }
               }
               
               lintOptions {
-                  abortOnError false  // 忽略lint错误，避免构建中断
+                  abortOnError false
               }
               
               repositories {
@@ -542,16 +572,14 @@ jobs:
           }
           
           dependencies {
-              // 仅app模块依赖CordovaLib库（单向依赖，无循环）
               implementation project(':CordovaLib')
-              // 应用模块自身依赖的AndroidX库
               implementation 'androidx.appcompat:appcompat:1.0.2'
           }
           EOF
 
-          # 10. 生成混淆规则（proguard-rules.pro）- 保护关键类与资源
+          # 生成混淆规则
           cat > "$APP_DIR/proguard-rules.pro" << EOF
-          # 保护WebView相关类（避免混淆导致WebView功能失效）
+          # 保护WebView相关类
           -keepclassmembers class * extends android.webkit.WebViewClient {
               public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
               public boolean *(android.webkit.WebView, java.lang.String);
@@ -560,13 +588,13 @@ jobs:
               public void *(android.webkit.WebView, java.lang.String);
           }
           
-          # 保护app模块的R资源类（避免混淆导致资源引用错误）
+          # 保护app模块的R资源类
           -keep class $APP_PACKAGE.R { *; }
-          -keep class $APP_PACKAGE.R$layout { *; }  // 保护布局资源类
-          -keep class $APP_PACKAGE.R$id { *; }      // 保护控件ID资源类
-          -keep class $APP_PACKAGE.R$string { *; }  // 保护字符串资源类
+          -keep class $APP_PACKAGE.R$layout { *; }
+          -keep class $APP_PACKAGE.R$id { *; }
+          -keep class $APP_PACKAGE.R$string { *; }
           
-          # 保护CordovaLib的工具类（避免混淆导致调用失败）
+          # 保护CordovaLib的工具类
           -keep class org.apache.cordova.WebViewHelper { *; }
           -keepclassmembers class org.apache.cordova.WebViewHelper {
               public <init>(android.content.Context, android.webkit.WebView, android.widget.LinearLayout);
@@ -575,98 +603,70 @@ jobs:
               public android.webkit.WebView getWebView();
           }
           EOF
-          # 11. 编译 Release 版本 APK（增加日志输出，便于问题定位）
-          echo "=== 开始编译 Release 版本 APK ==="
-          cd "$ANDROID_ROOT" || exit 1  # 进入项目根目录，确保后续命令生效
+
+          # 编译Release版本APK
+          echo "=== 开始编译Release版本APK ==="
+          cd "$ANDROID_ROOT" || exit 1
           
-          # 生成 Gradle 包装器（统一 Gradle 版本，避免环境差异）
           gradle wrapper --gradle-version 7.0.2
-          chmod +x gradlew  # 赋予包装器执行权限（避免权限不足导致失败）
-          
-          # 执行清理与编译：先清理旧构建产物，再编译Release APK
-          # --stacktrace：输出异常堆栈信息；--info：输出详细构建日志，便于排查错误
+          chmod +x gradlew
           ./gradlew clean :app:assembleRelease --stacktrace --info
           
-          # 检查 APK 是否生成成功，并复制到统一路径（含版本号，便于识别）
-          # 可能的 APK 路径（根据构建配置，存在已签名/未签名两种情况）
+          # 检查并复制APK
           APK_SOURCE_SIGNED="$APP_DIR/build/outputs/apk/release/app-release.apk"
           APK_SOURCE_UNSIGNED="$APP_DIR/build/outputs/apk/release/app-release-unsigned.apk"
-          # 目标路径：含版本号（如 CustomBrowser-v1.0.0.apk），便于 Releases 识别
           APK_DEST="/home/runner/work/webview-app/webview-app/CustomBrowser-v$APP_VERSION_NAME.apk"
           
-          # 优先使用已签名 APK，无则使用未签名 APK
           if [ -f "$APK_SOURCE_SIGNED" ]; then
             cp "$APK_SOURCE_SIGNED" "$APK_DEST"
-            echo "✅ 找到已签名 APK，复制完成：$APK_DEST"
+            echo "✅ 已复制已签名APK：$APK_DEST"
           elif [ -f "$APK_SOURCE_UNSIGNED" ]; then
             cp "$APK_SOURCE_UNSIGNED" "$APK_DEST"
-            echo "✅ 找到未签名 APK，复制完成：$APK_DEST"
+            echo "✅ 已复制未签名APK：$APK_DEST"
           else
-            echo "❌ 未找到 APK 文件，输出构建目录结构用于排查问题："
-            ls -R "$APP_DIR/build/outputs"  # 打印输出目录所有文件，协助定位问题
-            exit 1  # 构建失败，终止工作流
+            echo "❌ 未找到APK文件"
+            ls -R "$APP_DIR/build/outputs"
+            exit 1
           fi
 
-      - name: 创建并推送 Git Tag（与版本号关联，标记构建版本）
+      - name: 创建并推送Git Tag
         run: |
-          # 从环境变量获取版本号（来自 config.txt 或默认配置）
           APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
-          TAG_NAME="v$APP_VERSION_NAME"  # Tag 格式：v1.0.0（符合语义化版本规范）
+          TAG_NAME="v$APP_VERSION_NAME"
           
-          # 配置 Git 身份（用于提交 Tag，GitHub Actions 需显式配置）
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
-          # 若 Tag 已存在，先删除旧 Tag（避免版本冲突，确保新 Tag 生效）
           if git rev-parse --verify --quiet "$TAG_NAME"; then
-            echo "⚠️ Tag $TAG_NAME 已存在，删除旧 Tag 并重新创建..."
-            git tag -d "$TAG_NAME"  # 删除本地旧 Tag
-            git push origin --delete "$TAG_NAME" 2>/dev/null || true  # 删除远程旧 Tag（忽略删除失败）
+            echo "⚠️ 删除旧Tag $TAG_NAME"
+            git tag -d "$TAG_NAME"
+            git push origin --delete "$TAG_NAME" 2>/dev/null || true
           fi
           
-          # 创建新 Tag 并添加描述（注明修复内容，便于追溯）
-          git tag -a "$TAG_NAME" -m "自定义浏览器应用 $TAG_NAME（修复模块循环依赖，支持加载动画）"
-          # 推送 Tag 到远程仓库
+          git tag -a "$TAG_NAME" -m "自定义浏览器应用 $TAG_NAME"
           if ! git push origin "$TAG_NAME"; then
-            echo "⚠️ Tag 推送失败，重试一次..."
-            git push origin "$TAG_NAME" || exit 1  # 重试失败则终止，避免无效构建
+            echo "⚠️ 重试推送Tag..."
+            git push origin "$TAG_NAME" || exit 1
           fi
-          echo "✅ Git Tag 推送成功：$TAG_NAME（可在仓库 Tags 页面查看）"
+          echo "✅ Git Tag推送成功：$TAG_NAME"
 
-      - name: 发布 APK 到 GitHub Releases（自动生成下载链接，便于分发）
-        uses: softprops/action-gh-release@v2  # 成熟的 GitHub Releases 发布工具（社区广泛使用）
+      - name: 发布APK到GitHub Releases
+        uses: softprops/action-gh-release@v2
         env:
-          # GitHub 自动注入的仓库令牌，无需手动配置（需开启 Workflow 权限）
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: "v${{ env.APP_VERSION_NAME }}"  # 与 Git Tag 保持一致，关联版本
-          name: "自定义浏览器应用 v${{ env.APP_VERSION_NAME }}（修复版）"  # Releases 标题，注明版本
-          # Releases 描述（详细说明功能、修复内容和注意事项，便于用户理解）
+          tag_name: "v${{ env.APP_VERSION_NAME }}"
+          name: "自定义浏览器应用 v${{ env.APP_VERSION_NAME }}"
           body: |
             ### 📱 应用信息
             - 应用名称：${{ env.APP_NAME }}
-            - 应用包名：${{ env.APP_PACKAGE }}
-            - 支持系统：Android 5.0+（API 21 及以上）
-            - 构建版本：v${{ env.APP_VERSION_NAME }}（版本号：${{ env.APP_VERSION_CODE }}）
-            - 构建时间：${{ github.run_at }}（UTC 时间）
-            - 核心修复：**彻底消除 app ↔ CordovaLib 模块循环依赖**，解决构建失败问题
+            - 包名：${{ env.APP_PACKAGE }}
+            - 支持系统：Android 5.0+
+            - 版本：v${{ env.APP_VERSION_NAME }}
+            - 核心功能：网页加载+自定义加载动画
             
-            ### ✨ 核心功能
-            1. 加载目标网址：${{ env.CUSTOM_URL }}（可通过 config.txt 自定义）
-            2. 网页加载动画：显示圆形进度条+“加载中...”文字，解决白屏问题
-            3. 基础浏览器功能：支持网页跳转、缩放、JS 交互、返回键后退
-            4. 兼容性优化：支持 HTTP/HTTPS 混合内容加载，忽略 SSL 证书错误
-            5. 超时保护：网页加载超过 80 秒自动提示并关闭，避免卡死
-            
-            ### 📥 下载方式
-            点击下方 “Assets” 中的 APK 文件即可下载，直接安装到 Android 设备
-            
-            ### ⚠️ 注意事项
-            - 此 APK 为 **调试签名版本**，适合测试使用；生产环境需替换为正式签名
-            - 若安装失败，检查设备是否开启 “未知来源应用安装” 权限
-            - 如需修改网址/包名/应用名，在仓库根目录创建 config.txt 配置文件即可
-
-          # 上传 APK 文件（对应之前复制的目标路径）
+            ### 📥 下载
+            点击Assets中的APK文件下载安装
           files: /home/runner/work/webview-app/webview-app/CustomBrowser-v${{ env.APP_VERSION_NAME }}.apk
-          draft: false  # 不设为草稿，直接发布（如需审核，可改为 true）
-          prerelease: false  # 不设为预发布版本，标记为正式版（测试版可改为 true）
+          draft: false
+          prerelease: false
