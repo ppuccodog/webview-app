@@ -381,7 +381,7 @@ jobs:
           }
           EOF
 
-          # 4. 生成清单文件（AndroidManifest.xml）- 配置权限与启动页
+          # 4. 生成清单文件（AndroidManifest.xml）- 配置权限与启动页（修复XML格式错误）
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -394,17 +394,18 @@ jobs:
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
               
+              <!-- 修复：移除属性后多余注释，确保标签语法正确 -->
               <application
-                  android:label="$APP_NAME"  // 应用名称（来自config.txt）
-                  android:theme="@style/AppTheme"  // 应用主题（无标题栏）
-                  android:hardwareAccelerated="true"  // 启用硬件加速（优化WebView性能）
-                  android:usesCleartextTraffic="true">  // 允许HTTP明文请求（解决混合内容问题）
+                  android:label="$APP_NAME"
+                  android:theme="@style/AppTheme"
+                  android:hardwareAccelerated="true"
+                  android:usesCleartextTraffic="true">
                   
                   <!-- 主Activity配置：启动页+支持链接跳转 -->
                   <activity 
                       android:name=".MainActivity"
-                      android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"  // 横竖屏切换不重建Activity
-                      android:launchMode="singleTask">  // 单任务模式（避免多实例）
+                      android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"
+                      android:launchMode="singleTask">
                       <!-- 配置为启动页 -->
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
@@ -419,7 +420,7 @@ jobs:
                           <data android:scheme="https"/>
                       </intent-filter>
                   </activity>
-              </application>
+              </application> <!-- 确保application标签正确闭合 -->
           </manifest>
           EOF
 
