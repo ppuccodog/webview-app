@@ -463,11 +463,11 @@ jobs:
           echo -e "\n📄 生成的Gradle配置文件列表："
           find "$PROJECT_ROOT" -name "*.gradle" -o -name "settings.gradle" -o -name "gradle.properties" -o -name "proguard-rules.pro"
       ########################################################################
-      # 步骤7：生成项目核心代码
+      # 步骤7：生成项目核心代码（含CordovaLib的AndroidManifest.xml）
       ########################################################################
       - name: 生成项目核心代码
         run: |
-          # 生成CordovaActivity（核心页面逻辑）
+          # 1. 生成CordovaActivity（核心页面逻辑）
           CORDOVA_ACTIVITY="${{ env.PROJECT_ROOT }}/CordovaLib/src/main/java/org/apache/cordova/CordovaActivity.java"
           cat > "$CORDOVA_ACTIVITY" << 'EOF'
           package org.apache.cordova;
@@ -550,9 +550,9 @@ jobs:
           EOF
           [ -f "$CORDOVA_ACTIVITY" ] && echo "✅ 生成CordovaActivity.java" || exit 1
 
-          # 生成AndroidManifest.xml（应用配置清单）
-          MANIFEST_FILE="${{ env.PROJECT_ROOT }}/app/src/main/AndroidManifest.xml"
-          cat > "$MANIFEST_FILE" << EOF
+          # 2. 生成app模块的AndroidManifest.xml（应用配置清单）
+          APP_MANIFEST_FILE="${{ env.PROJECT_ROOT }}/app/src/main/AndroidManifest.xml"
+          cat > "$APP_MANIFEST_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="${{ env.APP_PACKAGE }}">
@@ -585,7 +585,43 @@ jobs:
               </application>
           </manifest>
           EOF
-          [ -f "$MANIFEST_FILE" ] && echo "✅ 生成AndroidManifest.xml" || exit 1
+          [ -f "$APP_MANIFEST_FILE" ] && echo "✅ 生成app模块AndroidManifest.xml" || exit 1
+
+          # 3. 生成CordovaLib模块的AndroidManifest.xml（关键：解决Library模块配置缺失）
+          CORDOVALIB_MANIFEST_DIR="${{ env.PROJECT_ROOT }}/CordovaLib/src/main"
+          # 先创建CordovaLib的Manifest目录（确保目录存在）
+          mkdir -p "$CORDOVALIB_MANIFEST_DIR"
+          CORDOVALIB_MANIFEST_FILE="$CORDOVALIB_MANIFEST_DIR/AndroidManifest.xml"
+          
+          cat > "$CORDOVALIB_MANIFEST_FILE" << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="org.apache.cordova"  <!-- CordovaLib固定包名，与CordovaActivity包名一致 -->
+              android:versionCode="1"
+              android:versionName="1.0">
+              
+              <!-- 声明库模块的最小SDK版本（与app模块一致） -->
+              <uses-sdk
+                  android:minSdkVersion="21"
+                  android:targetSdkVersion="30" />
+              
+              <!-- 声明CordovaLib为库模块（必须配置） -->
+              <application
+                  android:allowBackup="true"
+                  android:supportsRtl="true">
+                  <!-- 无需声明Activity，仅需基础配置 -->
+              </application>
+          </manifest>
+          EOF
+          
+          # 验证CordovaLib Manifest是否生成成功
+          if [ -f "$CORDOVALIB_MANIFEST_FILE" ] && [ -s "$CORDOVALIB_MANIFEST_FILE" ]; then
+            echo "✅ 生成CordovaLib模块AndroidManifest.xml"
+            ls -lh "$CORDOVALIB_MANIFEST_FILE"  # 输出文件信息，方便调试
+          else
+            echo "❌ CordovaLib模块AndroidManifest.xml生成失败"
+            exit 1
+          fi
 
       ########################################################################
       # 步骤8：构建安卓应用（修复Task 'clean' not found错误 + Java版本兼容）
