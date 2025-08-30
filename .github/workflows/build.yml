@@ -1,4 +1,4 @@
-name: 安卓自定义APP自动构建（修复Gradle执行问题）
+name: 安卓自定义APP自动构建（修复资源找不到问题）
 on:
   workflow_dispatch:  # 手动触发构建
 permissions:
@@ -29,7 +29,7 @@ jobs:
           javac -version
 
       ########################################################################
-      # 步骤2：配置Android SDK+Gradle环境（重点修复）
+      # 步骤2：配置Android SDK+Gradle环境
       ########################################################################
       - name: 配置Android构建环境
         run: |
@@ -66,7 +66,7 @@ jobs:
             "extras;android;m2repository" \
             --verbose --no_https || exit 1
 
-          # 5. 安装并验证Gradle 7.0.2（重点修复部分）
+          # 5. 安装并验证Gradle 7.0.2
           GRADLE_VERSION="7.0.2"
           GRADLE_PATH="$HOME/gradle-$GRADLE_VERSION"
           GRADLE_URL="https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip"
@@ -104,6 +104,7 @@ jobs:
           
           # 配置环境变量
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
+          echo "GRADLE_URL=$GRADLE_URL" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
       ########################################################################
@@ -132,12 +133,9 @@ jobs:
             [[ ! $CUSTOM_URL =~ ^http ]] && CUSTOM_URL="https://$CUSTOM_URL"
           fi
 
-          # 处理应用名称特殊字符
+          # 处理应用名称特殊字符（确保不为空）
           APP_NAME_SAFE=$(echo "$APP_NAME" | sed 's/[^a-zA-Z0-9_-]/_/g')
-          # 确保名称不为空
-          if [ -z "$APP_NAME_SAFE" ]; then
-            APP_NAME_SAFE="my_app"
-          fi
+          [ -z "$APP_NAME_SAFE" ] && APP_NAME_SAFE="my_app_${RANDOM:0:4}"
 
           # 输出配置信息
           echo -e "\n✅ 最终配置："
@@ -155,17 +153,47 @@ jobs:
           echo "LOAD_TIMEOUT=${LOAD_TIMEOUT:-60000}" >> $GITHUB_ENV
           echo "CUSTOM_URL=$CUSTOM_URL" >> $GITHUB_ENV
 
+          # 提前定义项目路径（确保后续步骤路径一致）
+          PROJECT_ROOT="$GITHUB_WORKSPACE/myapp/android-project"
+          echo "PROJECT_ROOT=$PROJECT_ROOT" >> $GITHUB_ENV
+          echo "APP_RES_DIR=$PROJECT_ROOT/app/src/main/res" >> $GITHUB_ENV
+
       ########################################################################
-      # 步骤4：生成应用图标（纯图形方式）
+      # 步骤4：生成安卓项目基础结构（先创建目录，再生成资源）
       ########################################################################
-      - name: 生成应用图标（纯图形方式）
+      - name: 创建安卓项目基础结构
         run: |
-          # 1. 初始化资源目录
-          RES_DIR="$GITHUB_WORKSPACE/myapp/android-project/app/src/main/res"
-          rm -rf "$RES_DIR"
-          mkdir -p "$RES_DIR/mipmap-mdpi" "$RES_DIR/mipmap-hdpi" "$RES_DIR/mipmap-xhdpi" "$RES_DIR/mipmap-xxhdpi" "$RES_DIR/mipmap-xxxhdpi" "$RES_DIR/values"
+          echo "✅ 开始创建项目结构：${{ env.PROJECT_ROOT }}"
           
-          # 2. 定义图标规格
+          # 1. 创建完整项目目录结构
+          mkdir -p "${{ env.PROJECT_ROOT }}/app/src/main"
+          mkdir -p "${{ env.PROJECT_ROOT }}/CordovaLib/src/main/java/org/apache/cordova"
+          
+          # 2. 创建资源目录（确保路径与后续生成一致）
+          mkdir -p "${{ env.APP_RES_DIR }}/mipmap-mdpi"
+          mkdir -p "${{ env.APP_RES_DIR }}/mipmap-hdpi"
+          mkdir -p "${{ env.APP_RES_DIR }}/mipmap-xhdpi"
+          mkdir -p "${{ env.APP_RES_DIR }}/mipmap-xxhdpi"
+          mkdir -p "${{ env.APP_RES_DIR }}/mipmap-xxxhdpi"
+          mkdir -p "${{ env.APP_RES_DIR }}/values"
+          
+          # 3. 创建Java源码目录
+          JAVA_DIR="${{ env.PROJECT_ROOT }}/app/src/main/java/$(echo ${{ env.APP_PACKAGE }} | tr '.' '/')"
+          mkdir -p "$JAVA_DIR"
+          echo "JAVA_DIR=$JAVA_DIR" >> $GITHUB_ENV
+          
+          # 4. 验证目录结构
+          echo -e "\n📁 项目基础结构："
+          tree -L 5 "${{ env.PROJECT_ROOT }}"
+
+      ########################################################################
+      # 步骤5：生成应用图标和资源文件（使用预定义的正确路径）
+      ########################################################################
+      - name: 生成应用图标和资源文件
+        run: |
+          echo "✅ 在${{ env.APP_RES_DIR }}生成资源文件"
+          
+          # 1. 定义图标规格
           declare -A ICON_SPECS=(
             ["mdpi"]="48x48"
             ["hdpi"]="72x72"
@@ -174,85 +202,94 @@ jobs:
             ["xxxhdpi"]="192x192"
           )
 
-          # 3. 生成纯图形图标
+          # 2. 生成纯图形图标（确保输出到正确路径）
           for DPI in "${!ICON_SPECS[@]}"; do
             SIZE=${ICON_SPECS[$DPI]}
-            DEST_PATH="$RES_DIR/mipmap-$DPI/ic_launcher.png"
+            DEST_PATH="${{ env.APP_RES_DIR }}/mipmap-$DPI/ic_launcher.png"
             
             # 计算图标元素尺寸
             let "outer_radius = ${SIZE%x*} / 2"
             let "inner_radius = outer_radius * 3 / 5"
             let "dot_radius = outer_radius / 5"
             
-            # 生成蓝色圆形背景 + 白色圆形 + 蓝色小圆点的图标
-            convert -size "$SIZE" xc:transparent \
+            # 生成蓝色圆形图标（带 fallback 机制）
+            if ! convert -size "$SIZE" xc:transparent \
               -fill "#2196F3" -draw "circle $outer_radius,$outer_radius $outer_radius,0" \
               -fill "white" -draw "circle $outer_radius,$outer_radius $inner_radius,0" \
               -fill "#2196F3" -draw "circle $outer_radius,$outer_radius $dot_radius,0" \
-              "$DEST_PATH"
-            
-            # 校验生成结果
-            if [ ! -f "$DEST_PATH" ] || [ ! -s "$DEST_PATH" ]; then
-              echo "❌ 图标生成失败：$DEST_PATH"
-              # 尝试备选方案：纯蓝色圆形
-              convert -size "$SIZE" xc:transparent \
+              "$DEST_PATH"; then
+              
+              echo "⚠️ 主图标生成失败，尝试备选方案"
+              # 备选方案：纯蓝色圆形
+              if ! convert -size "$SIZE" xc:transparent \
                 -fill "#2196F3" -draw "circle $outer_radius,$outer_radius $outer_radius,0" \
-                "$DEST_PATH"
-              # 再次检查
-              if [ ! -f "$DEST_PATH" ] || [ ! -s "$DEST_PATH" ]; then
-                echo "❌ 备选方案也失败，使用紧急备用图标"
-                # 最简化方案：纯色方块
+                "$DEST_PATH"; then
+                
+                echo "⚠️ 备选方案失败，使用纯色方块"
+                # 最终方案：纯色方块
                 convert -size "$SIZE" xc:"#2196F3" "$DEST_PATH"
-                if [ ! -f "$DEST_PATH" ] || [ ! -s "$DEST_PATH" ]; then
-                  echo "❌ 所有图标生成方案均失败"
-                  exit 1
-                fi
               fi
             fi
-            echo "✅ 生成图标：$DEST_PATH"
+            
+            # 强制验证文件存在性和大小
+            if [ ! -f "$DEST_PATH" ] || [ ! -s "$DEST_PATH" ]; then
+              echo "❌ 图标生成失败：$DEST_PATH"
+              exit 1
+            fi
+            echo "✅ 生成图标：$DEST_PATH (大小：$(du -sh "$DEST_PATH" | cut -f1))"
           done
 
-          # 4. 生成基础资源文件
-          cat > "$RES_DIR/values/strings.xml" << EOF
+          # 3. 生成strings.xml（应用名称资源）
+          STRINGS_FILE="${{ env.APP_RES_DIR }}/values/strings.xml"
+          cat > "$STRINGS_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <string name="app_name">${{ env.APP_NAME }}</string>
+              <string name="launcher_name">${{ env.APP_NAME }}</string>
           </resources>
           EOF
+          [ -f "$STRINGS_FILE" ] && echo "✅ 生成strings.xml：$STRINGS_FILE" || { echo "❌ strings.xml生成失败"; exit 1; }
 
-          cat > "$RES_DIR/values/styles.xml" << EOF
+          # 4. 生成styles.xml（主题资源）
+          STYLES_FILE="${{ env.APP_RES_DIR }}/values/styles.xml"
+          cat > "$STYLES_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
                   <item name="android:windowNoTitle">true</item>
                   <item name="android:windowActionBar">false</item>
+                  <item name="android:windowBackground">@android:color/white</item>
               </style>
+              <style name="AppTheme.Launcher" parent="AppTheme"/>
+          </resources>
+          EOF
+          [ -f "$STYLES_FILE" ] && echo "✅ 生成styles.xml：$STYLES_FILE" || { echo "❌ styles.xml生成失败"; exit 1; }
+
+          # 5. 生成colors.xml（可选，增加资源完整性）
+          COLORS_FILE="${{ env.APP_RES_DIR }}/values/colors.xml"
+          cat > "$COLORS_FILE" << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="colorPrimary">#2196F3</color>
+              <color name="colorPrimaryDark">#1976D2</color>
+              <color name="colorAccent">#FF4081</color>
           </resources>
           EOF
 
-          # 输出资源目录结构
-          echo -e "\n📁 资源目录结构："
-          tree "$RES_DIR"
-          echo "RES_DIR=$RES_DIR" >> $GITHUB_ENV
+          # 6. 最终验证资源目录
+          echo -e "\n📁 完整资源目录结构："
+          tree "${{ env.APP_RES_DIR }}"
+          echo -e "\n📄 资源文件列表："
+          find "${{ env.APP_RES_DIR }}" -type f
 
       ########################################################################
-      # 步骤5：生成安卓项目代码
+      # 步骤6：生成安卓项目代码和配置文件
       ########################################################################
-      - name: 生成安卓项目代码
+      - name: 生成安卓项目代码和配置
         run: |
-          # 1. 初始化项目路径
-          PROJECT_PATH="$GITHUB_WORKSPACE/myapp"
-          ANDROID_ROOT="$PROJECT_PATH/android-project"
-          APP_DIR="$ANDROID_ROOT/app"
-          CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
-          JAVA_DIR="$APP_DIR/src/main/java/$(echo ${{ env.APP_PACKAGE }} | tr '.' '/')"
-          
-          # 清理旧项目
-          rm -rf "$ANDROID_ROOT"
-          mkdir -p "$JAVA_DIR" "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova" "$APP_DIR/src/main/assets/www"
-
-          # 2. 核心WebView代码
-          cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/CordovaActivity.java" << EOF
+          # 1. 生成CordovaActivity核心代码
+          CORDOVA_ACTIVITY="${{ env.PROJECT_ROOT }}/CordovaLib/src/main/java/org/apache/cordova/CordovaActivity.java"
+          cat > "$CORDOVA_ACTIVITY" << EOF
           package org.apache.cordova;
           import android.app.Activity;
           import android.os.Bundle;
@@ -352,16 +389,20 @@ jobs:
               }
           }
           EOF
+          [ -f "$CORDOVA_ACTIVITY" ] && echo "✅ 生成CordovaActivity.java" || { echo "❌ CordovaActivity生成失败"; exit 1; }
 
-          # 3. 主活动代码
-          cat > "$JAVA_DIR/MainActivity.java" << EOF
+          # 2. 生成主活动代码
+          MAIN_ACTIVITY="${{ env.JAVA_DIR }}/MainActivity.java"
+          cat > "$MAIN_ACTIVITY" << EOF
           package ${{ env.APP_PACKAGE }};
           import org.apache.cordova.CordovaActivity;
           public class MainActivity extends CordovaActivity {}
           EOF
+          [ -f "$MAIN_ACTIVITY" ] && echo "✅ 生成MainActivity.java" || { echo "❌ MainActivity生成失败"; exit 1; }
 
-          # 4. AndroidManifest.xml
-          cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
+          # 3. 生成AndroidManifest.xml（确保资源引用正确）
+          MANIFEST_FILE="${{ env.PROJECT_ROOT }}/app/src/main/AndroidManifest.xml"
+          cat > "$MANIFEST_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
                     package="${{ env.APP_PACKAGE }}">
@@ -390,10 +431,11 @@ jobs:
               </application>
           </manifest>
           EOF
+          [ -f "$MANIFEST_FILE" ] && echo "✅ 生成AndroidManifest.xml" || { echo "❌ Manifest生成失败"; exit 1; }
 
-          # 5. Gradle配置文件
+          # 4. 生成Gradle配置文件
           # 项目级gradle.properties
-          cat > "$ANDROID_ROOT/gradle.properties" << 'EOF'
+          cat > "${{ env.PROJECT_ROOT }}/gradle.properties" << 'EOF'
           android.useAndroidX=true
           android.enableJetifier=true
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
@@ -402,7 +444,7 @@ jobs:
           EOF
 
           # 项目级build.gradle
-          cat > "$ANDROID_ROOT/build.gradle" << 'EOF'
+          cat > "${{ env.PROJECT_ROOT }}/build.gradle" << 'EOF'
           buildscript {
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/google' }
@@ -426,12 +468,12 @@ jobs:
           EOF
 
           # 模块级settings.gradle
-          cat > "$ANDROID_ROOT/settings.gradle" << 'EOF'
+          cat > "${{ env.PROJECT_ROOT }}/settings.gradle" << 'EOF'
           include ':app', ':CordovaLib'
           EOF
 
           # CordovaLib模块配置
-          cat > "$CORDOVA_LIB_DIR/build.gradle" << 'EOF'
+          cat > "${{ env.PROJECT_ROOT }}/CordovaLib/build.gradle" << 'EOF'
           apply plugin: 'com.android.library'
           android {
               compileSdk 30
@@ -448,7 +490,7 @@ jobs:
           EOF
 
           # App模块配置
-          cat > "$APP_DIR/build.gradle" << EOF
+          cat > "${{ env.PROJECT_ROOT }}/app/build.gradle" << EOF
           apply plugin: 'com.android.application'
           android {
               compileSdk 30
@@ -474,6 +516,12 @@ jobs:
               lintOptions {
                   abortOnError false
               }
+              // 明确指定资源目录
+              sourceSets {
+                  main {
+                      res.srcDirs = ['src/main/res']
+                  }
+              }
           }
           dependencies {
               implementation project(':CordovaLib')
@@ -483,7 +531,7 @@ jobs:
           EOF
 
           # ProGuard配置
-          cat > "$APP_DIR/proguard-rules.pro" << 'EOF'
+          cat > "${{ env.PROJECT_ROOT }}/app/proguard-rules.pro" << 'EOF'
           -keepclassmembers class * extends android.webkit.WebViewClient {
               public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
               public boolean *(android.webkit.WebView, java.lang.String);
@@ -496,9 +544,9 @@ jobs:
           -dontwarn androidx.**
           EOF
 
-          # 正确配置Gradle wrapper（使用已安装的Gradle）
-          mkdir -p "$ANDROID_ROOT/gradle/wrapper"
-          cat > "$ANDROID_ROOT/gradle/wrapper/gradle-wrapper.properties" << EOF
+          # 配置Gradle wrapper
+          mkdir -p "${{ env.PROJECT_ROOT }}/gradle/wrapper"
+          cat > "${{ env.PROJECT_ROOT }}/gradle/wrapper/gradle-wrapper.properties" << EOF
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
           distributionUrl=${{ env.GRADLE_URL }}
@@ -506,21 +554,21 @@ jobs:
           zipStorePath=wrapper/dists
           EOF
           
-          # 创建正确的gradlew脚本
-          cat > "$ANDROID_ROOT/gradlew" << 'EOF'
+          # 创建gradlew脚本
+          cat > "${{ env.PROJECT_ROOT }}/gradlew" << 'EOF'
           #!/usr/bin/env sh
           GRADLE_HOME="${HOME}/gradle-7.0.2"
           export PATH="$GRADLE_HOME/bin:$PATH"
           exec gradle "$@"
           EOF
-          chmod +x "$ANDROID_ROOT/gradlew"
+          chmod +x "${{ env.PROJECT_ROOT }}/gradlew"
 
-          # 验证项目Gradle配置
-          echo "✅ 验证项目Gradle版本："
-          cd "$ANDROID_ROOT" && ./gradlew --version
+          # 验证项目配置
+          echo -e "\n📁 完整项目结构："
+          tree -L 4 "${{ env.PROJECT_ROOT }}"
 
       ########################################################################
-      # 步骤6：编译与发布（使用绝对路径调用Gradle）
+      # 步骤7：编译与发布
       ########################################################################
       - name: 编译APK
         run: |
@@ -528,9 +576,6 @@ jobs:
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
           export GRADLE_HOME="${{ env.GRADLE_PATH }}"
           export PATH="$GRADLE_HOME/bin:$PATH"
-          
-          PROJECT_DIR="$GITHUB_WORKSPACE/myapp/android-project"
-          cd "$PROJECT_DIR" || { echo "❌ 项目目录不存在"; exit 1; }
           
           # 显示环境信息用于调试
           echo "✅ 环境信息："
@@ -541,24 +586,26 @@ jobs:
           echo "Gradle版本："
           gradle --version
           
-          # 使用绝对路径调用Gradle构建
+          # 进入项目目录
+          cd "${{ env.PROJECT_ROOT }}" || { echo "❌ 项目目录不存在"; exit 1; }
+          
+          # 执行构建
           echo "✅ 开始构建APK..."
-          "$GRADLE_HOME/bin/gradle" clean :app:assembleRelease --stacktrace --info || {
+          gradle clean :app:assembleRelease --stacktrace --info || {
             echo "❌ 编译失败，查看详细日志："
-            # 检查日志文件是否存在
-            if [ -f "$PROJECT_DIR/app/build/reports/lint-results-release.xml" ]; then
-              cat "$PROJECT_DIR/app/build/reports/lint-results-release.xml"
-            else
-              echo "⚠️ 未找到lint报告文件"
+            # 检查可能的日志位置
+            if [ -d "app/build/reports" ]; then
+              echo "📄 构建报告目录内容："
+              tree app/build/reports
             fi
             exit 1
           }
           
           # 查找APK文件
-          APK_PATH=$(find "$PROJECT_DIR/app/build/outputs/apk/release" -name "*.apk" | head -n 1)
+          APK_PATH=$(find "app/build/outputs/apk/release" -name "*.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
             echo "❌ 未找到APK文件"
-            tree "$PROJECT_DIR/app/build/outputs"
+            tree app/build/outputs
             exit 1
           fi
           
