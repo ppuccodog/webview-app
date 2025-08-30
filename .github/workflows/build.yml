@@ -463,7 +463,7 @@ jobs:
           echo -e "\n📄 生成的Gradle配置文件列表："
           find "$PROJECT_ROOT" -name "*.gradle" -o -name "settings.gradle" -o -name "gradle.properties" -o -name "proguard-rules.pro"
       ########################################################################
-      # 步骤7：生成项目核心代码（修正矢量图标XML语法）
+      # 步骤7：生成项目核心代码（修复CordovaLib配置）
       ########################################################################
       - name: 生成项目核心代码
         run: |
@@ -587,7 +587,7 @@ jobs:
           EOF
           [ -f "$APP_MANIFEST_FILE" ] && echo "✅ 生成app模块AndroidManifest.xml" || exit 1
 
-          # 3. 生成CordovaLib模块的AndroidManifest.xml（语法已修正）
+          # 3. 修复CordovaLib模块的AndroidManifest.xml（删除uses-sdk标签）
           CORDOVALIB_MANIFEST_DIR="${{ env.PROJECT_ROOT }}/CordovaLib/src/main"
           mkdir -p "$CORDOVALIB_MANIFEST_DIR" || { echo "❌ 创建CordovaLib目录失败"; exit 1; }
           CORDOVALIB_MANIFEST_FILE="$CORDOVALIB_MANIFEST_DIR/AndroidManifest.xml"
@@ -595,34 +595,75 @@ jobs:
           cat > "$CORDOVALIB_MANIFEST_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              package="org.apache.cordova"
-              android:versionCode="1"
-              android:versionName="1.0">
-
-              <uses-sdk
-                  android:minSdkVersion="21"
-                  android:targetSdkVersion="30" />
-
+              package="org.apache.cordova">
+              <!-- 关键修复：删除原有的uses-sdk标签（SDK版本移至build.gradle配置） -->
               <application
                   android:allowBackup="true"
                   android:supportsRtl="true" />
-
           </manifest>
           EOF
           
           if [ -f "$CORDOVALIB_MANIFEST_FILE" ] && [ -s "$CORDOVALIB_MANIFEST_FILE" ]; then
-            echo "✅ 生成CordovaLib模块AndroidManifest.xml"
+            echo "✅ 生成CordovaLib模块AndroidManifest.xml（已删除uses-sdk）"
           else
             echo "❌ CordovaLib模块AndroidManifest.xml生成失败"
             exit 1
           fi
 
-          # 4. 生成默认应用图标（mipmap/ic_launcher）- 修正XML语法
-          # 创建mipmap资源目录（适配不同分辨率）
+          # 4. 新增：生成CordovaLib模块的build.gradle（核心修复，配置SDK版本和依赖）
+          CORDOVALIB_BUILD_GRADLE="${{ env.PROJECT_ROOT }}/CordovaLib/build.gradle"
+          cat > "$CORDOVALIB_BUILD_GRADLE" << EOF
+          // CordovaLib作为Android库模块（library），需配置插件和SDK版本
+          apply plugin: 'com.android.library'
+
+          android {
+              // 编译SDK版本（与app模块保持一致）
+              compileSdkVersion 30
+
+              defaultConfig {
+                  // 关键：在build.gradle中配置SDK版本（替代Manifest中的uses-sdk）
+                  minSdkVersion 21
+                  targetSdkVersion 30
+                  versionCode 1
+                  versionName "1.0"
+
+                  // 避免Lint检查警告
+                  testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+              }
+
+              // 编译选项（与Java版本匹配）
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
+              }
+
+              // Lint配置：仅忽略无关警告（可选，确保核心错误不被忽略）
+              lintOptions {
+                  abortOnError true // 保留错误终止构建的逻辑，确保代码质量
+                  disable 'GradleDependency' // 忽略依赖相关的非关键警告
+              }
+          }
+
+          // 依赖配置：CordovaLib需依赖AndroidX核心库（支持Activity等组件）
+          dependencies {
+              implementation 'androidx.appcompat:appcompat:1.4.1'
+              testImplementation 'junit:junit:4.13.2'
+              androidTestImplementation 'androidx.test.ext:junit:1.1.3'
+              androidTestImplementation 'androidx.test.espresso:espresso-core:3.4.0'
+          }
+          EOF
+          
+          if [ -f "$CORDOVALIB_BUILD_GRADLE" ] && [ -s "$CORDOVALIB_BUILD_GRADLE" ]; then
+            echo "✅ 生成CordovaLib模块build.gradle（已配置SDK版本）"
+          else
+            echo "❌ CordovaLib模块build.gradle生成失败"
+            exit 1
+          fi
+
+          # 5. 生成默认应用图标（mipmap/ic_launcher）- 已修复语法，无需修改
           MIPMAP_DIR="${{ env.PROJECT_ROOT }}/app/src/main/res/mipmap-anydpi-v26"
           mkdir -p "$MIPMAP_DIR" || { echo "❌ 创建mipmap目录失败"; exit 1; }
           
-          # 核心修正：1. 补充android:name属性 2. 确保属性值双引号闭合 3. 移除多余空格
           LAUNCHER_ICON="$MIPMAP_DIR/ic_launcher.xml"
           cat > "$LAUNCHER_ICON" << EOF
           <?xml version="1.0" encoding="utf-8"?>
@@ -631,7 +672,6 @@ jobs:
               android:height="24dp"
               android:viewportWidth="24.0"
               android:viewportHeight="24.0">
-              <!-- 补充android:name属性（Android矢量图规范要求），确保所有属性双引号闭合 -->
               <path
                   android:name="icon_shape"
                   android:fillColor="#FF0000"
@@ -639,18 +679,14 @@ jobs:
           </vector>
           EOF
           
-          # 验证图标是否生成成功
           if [ -f "$LAUNCHER_ICON" ] && [ -s "$LAUNCHER_ICON" ]; then
             echo "✅ 生成默认应用图标：$LAUNCHER_ICON"
-            # 输出图标内容供调试（确认语法正确性）
-            echo "📄 图标XML内容："
-            cat "$LAUNCHER_ICON"
           else
             echo "❌ 应用图标生成失败"
             exit 1
           fi
 
-          # 5. 生成字符串资源（解决app_name引用）
+          # 6. 生成字符串资源（解决app_name引用，不变）
           VALUES_DIR="${{ env.PROJECT_ROOT }}/app/src/main/res/values"
           mkdir -p "$VALUES_DIR" || { echo "❌ 创建values目录失败"; exit 1; }
           STRINGS_FILE="$VALUES_DIR/strings.xml"
@@ -668,13 +704,11 @@ jobs:
             exit 1
           fi
 
-          # 6. 新增：生成主题资源（解决AppTheme引用）
-          # 之前未生成theme资源，可能导致后续主题引用错误，提前补充
+          # 7. 生成主题资源（解决AppTheme引用，不变）
           STYLES_FILE="$VALUES_DIR/styles.xml"
           cat > "$STYLES_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
-              <!-- 定义默认主题，匹配AndroidManifest中的@style/AppTheme -->
               <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
                   <item name="windowNoTitle">true</item>
                   <item name="windowActionBar">false</item>
@@ -691,6 +725,20 @@ jobs:
             echo "❌ 主题资源生成失败"
             exit 1
           fi
+
+          # 8. 验证app模块build.gradle（确保已依赖CordovaLib，若之前未配置需补充）
+          APP_BUILD_GRADLE="${{ env.PROJECT_ROOT }}/app/build.gradle"
+          # 检查是否已包含CordovaLib依赖，若无则添加
+          if ! grep -q "implementation project(':CordovaLib')" "$APP_BUILD_GRADLE"; then
+            echo "📝 为app模块添加CordovaLib依赖"
+            # 在dependencies块末尾添加依赖（若dependencies块不存在则创建）
+            if grep -q "dependencies {" "$APP_BUILD_GRADLE"; then
+              sed -i '/dependencies {/a \    implementation project(\':CordovaLib\')' "$APP_BUILD_GRADLE"
+            else
+              echo -e "\ndependencies {\n    implementation project(':CordovaLib')\n}" >> "$APP_BUILD_GRADLE"
+            fi
+          fi
+          echo "✅ 验证app模块build.gradle完成（已包含CordovaLib依赖）"
       ########################################################################
       # 步骤8：构建安卓应用（修复Task 'clean' not found错误 + Java版本兼容）
       ########################################################################
