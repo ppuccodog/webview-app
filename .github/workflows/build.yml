@@ -1,474 +1,165 @@
-name: 安卓自定义APP自动构建（完整修复版）
+name: Build Android WebView App
+
 on:
-  workflow_dispatch:  # 手动触发构建
-permissions:
-  contents: write     # 允许写入Releases
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  build-app:
+  build:
     runs-on: ubuntu-latest
+
+    env:
+      JDK11_PATH: /usr/lib/jvm/java-11-openjdk-amd64
+      ANDROID_HOME: /home/runner/android-sdk
+      ANDROID_SDK_ROOT: /home/runner/android-sdk
+      GRADLE_PATH: /home/runner/gradle-7.0.2
+      APP_PACKAGE: com.yjsyy.customapp
+      APP_NAME: YJSYY_CSDH
+      APP_NAME_SAFE: YJSYY_CSDH
+      APP_VERSION: 1.0.1
+      LOAD_TIMEOUT: 80000
+      CUSTOM_URL: http://cs.hs1314.cn
+      PROJECT_ROOT: /home/runner/work/webview-app/webview-app/myapp/android-project
+      APP_RES_DIR: /home/runner/work/webview-app/webview-app/myapp/android-project/app/src/main/res
+      JAVA_DIR: /home/runner/work/webview-app/webview-app/myapp/android-project/app/src/main/java/com/yjsyy/customapp
+
     steps:
-      ########################################################################
-      # 步骤1：拉取代码+安装基础依赖
-      ########################################################################
-      - name: 拉取GitHub项目代码
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: true
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: 安装核心依赖工具
+      - name: 准备工作目录
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y xmlstarlet imagemagick openjdk-11-jdk tree
-          # 验证imagemagick安装（图标生成必需）
-          if ! convert --version; then
-            echo "❌ imagemagick安装失败，无法生成图标"
-            exit 1
-          fi
-          # 配置JDK环境变量
-          echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
-          
-          # 验证关键工具可用性
-          java -version && echo "✅ Java环境正常" || { echo "❌ Java环境异常"; exit 1; }
-          xmlstarlet --version && echo "✅ XML解析工具正常" || { echo "❌ XML解析工具异常"; exit 1; }
+          mkdir -p "${{ env.PROJECT_ROOT }}"
+          mkdir -p "${{ env.APP_RES_DIR }}"
+          mkdir -p "${{ env.JAVA_DIR }}"
+          echo "工作目录准备完成"
 
-      ########################################################################
-      # 步骤2：配置Android SDK+Gradle环境
-      ########################################################################
-      - name: 配置Android构建环境
+      - name: 安装JDK 11
         run: |
-          export TIMEOUT=300
-          # 清理旧环境避免冲突
-          rm -rf "$HOME/android-sdk" "$HOME/gradle-7.0.2"
-          
-          # 配置Android SDK
-          ANDROID_SDK_PATH="$HOME/android-sdk"
-          mkdir -p "$ANDROID_SDK_PATH"
-          echo "ANDROID_HOME=$ANDROID_SDK_PATH" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_PATH" >> $GITHUB_ENV
+          sudo apt-get update
+          sudo apt-get install -y openjdk-11-jdk
+          export JAVA_HOME="${{ env.JDK11_PATH }}"
+          echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
+          java -version
 
-          # 下载SDK Tools
-          SDK_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip"
-          if ! wget --timeout=$TIMEOUT --tries=3 "$SDK_TOOLS_URL" -O sdk-tools.zip; then
-            echo "❌ 下载SDK Tools失败，重试1次"
-            wget --timeout=$TIMEOUT --tries=2 "$SDK_TOOLS_URL" -O sdk-tools.zip || exit 1
-          fi
-          # 正确解压SDK Tools（修复目录结构问题）
-          mkdir -p "$ANDROID_SDK_PATH/cmdline-tools/latest"
-          unzip -q sdk-tools.zip -d "$ANDROID_SDK_PATH/cmdline-tools/latest"
-          mv "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools/"* "$ANDROID_SDK_PATH/cmdline-tools/latest/" 2>/dev/null || true
-          rm -rf "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools"
-
-          # 安装SDK必要组件
-          SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/latest/bin/sdkmanager"
-          chmod +x "$SDK_MANAGER"
-          yes | "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" --licenses || true
-          "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" \
-            "platforms;android-30" \
-            "build-tools;30.0.2" \
-            "platform-tools" \
-            "extras;android;m2repository" \
-            "extras;google;m2repository" \
-            --verbose --no_https || exit 1
-
-          # 配置Gradle 7.0.2（兼容Android 30）
-          GRADLE_VERSION="7.0.2"
-          GRADLE_PATH="$HOME/gradle-$GRADLE_VERSION"
-          GRADLE_URL="https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip"
+      - name: 安装Android SDK
+        run: |
+          # 创建SDK目录
+          mkdir -p "${{ env.ANDROID_HOME }}"
           
-          # 清理旧Gradle
-          rm -rf "$GRADLE_PATH"
+          # 下载并解压SDK命令行工具
+          wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O sdk-tools.zip
+          unzip -q sdk-tools.zip -d "${{ env.ANDROID_HOME }}/cmdline-tools"
           
-          # 下载并验证Gradle
-          if ! wget --timeout=$TIMEOUT --tries=3 "$GRADLE_URL" -O gradle.zip; then
-            echo "❌ 下载Gradle失败，重试1次"
-            wget --timeout=$TIMEOUT --tries=2 "$GRADLE_URL" -O gradle.zip || exit 1
-          fi
-          
-          # 验证压缩包完整性
-          unzip -t gradle.zip || {
-            echo "❌ Gradle压缩包损坏，重新下载"
-            rm gradle.zip
-            wget "$GRADLE_URL" -O gradle.zip || exit 1
-            unzip -t gradle.zip || { echo "❌ Gradle压缩包再次损坏"; exit 1; }
-          }
-          
-          # 解压并配置权限
-          unzip -q gradle.zip -d "$HOME"
-          chmod -R 755 "$GRADLE_PATH"
-          
-          # 验证Gradle安装
-          echo "✅ 验证Gradle版本："
-          "$GRADLE_PATH/bin/gradle" --version || { echo "❌ Gradle安装失败"; exit 1; }
+          # 重命名工具目录
+          mv "${{ env.ANDROID_HOME }}/cmdline-tools/cmdline-tools" "${{ env.ANDROID_HOME }}/cmdline-tools/latest"
           
           # 配置环境变量
-          echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
-          echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
-
-      ########################################################################
-      # 步骤3：解析配置文件（读取应用信息）
-      ########################################################################
-      - name: 解析配置文件
-        run: |
-          # 初始化默认配置
-          APP_PACKAGE="com.my.defaultapp"
-          APP_NAME="我的应用"
-          APP_VERSION="1.0.0"
-          LOAD_TIMEOUT="60000"
-          CUSTOM_URL="https://www.baidu.com"
-
-          # 显示当前目录文件，确认配置文件是否存在
-          echo "📂 当前工作目录文件列表："
-          ls -la
+          echo "ANDROID_HOME=${{ env.ANDROID_HOME }}" >> $GITHUB_ENV
+          echo "${{ env.ANDROID_HOME }}/platform-tools" >> $GITHUB_PATH
+          echo "${{ env.ANDROID_HOME }}/cmdline-tools/latest/bin" >> $GITHUB_PATH
           
-          # 读取config.xml（若存在）
-          if [ -f "config.xml" ]; then
-            echo "✅ 发现config.xml，开始解析..."
-            # 验证XML格式有效性
-            if xmlstarlet val -q "config.xml"; then
-              # 读取包名
-              CONFIG_PACKAGE=$(xmlstarlet sel -t -v "/widget/@id" "config.xml" 2>/dev/null)
-              if [ -n "$CONFIG_PACKAGE" ] && [[ "$CONFIG_PACKAGE" =~ ^[a-zA-Z0-9.]+$ ]]; then
-                APP_PACKAGE="$CONFIG_PACKAGE"
-                echo "📦 包名：$APP_PACKAGE（来自config.xml）"
-              fi
-              
-              # 读取应用名称
-              CONFIG_NAME=$(xmlstarlet sel -t -v "/widget/name" "config.xml" 2>/dev/null)
-              if [ -n "$CONFIG_NAME" ]; then
-                APP_NAME="$CONFIG_NAME"
-                echo "🏷️ 应用名称：$APP_NAME（来自config.xml）"
-              fi
-              
-              # 读取版本号
-              CONFIG_VERSION=$(xmlstarlet sel -t -v "/widget/@version" "config.xml" 2>/dev/null)
-              if [ -n "$CONFIG_VERSION" ] && [[ "$CONFIG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-                APP_VERSION="$CONFIG_VERSION"
-                echo "🔢 版本号：$APP_VERSION（来自config.xml）"
-              fi
-              
-              # 读取超时设置
-              CONFIG_TIMEOUT=$(xmlstarlet sel -t -v "/widget/platform[@name='android']/preference[@name='LoadUrlTimeoutValue']/@value" "config.xml" 2>/dev/null)
-              if [ -n "$CONFIG_TIMEOUT" ] && [[ "$CONFIG_TIMEOUT" =~ ^[0-9]+$ ]]; then
-                LOAD_TIMEOUT="$CONFIG_TIMEOUT"
-                echo "⏱️ 加载超时：$LOAD_TIMEOUT（来自config.xml）"
-              fi
-            else
-              echo "⚠️ config.xml格式无效，使用默认配置"
-            fi
-          else
-            echo "⚠️ 未找到config.xml，使用默认配置"
-          fi
-
-          # 读取config.txt（配置目标网址）
-          if [ -f "config.txt" ]; then
-            CUSTOM_URL=$(cat config.txt | tr -d '\r')
-            # 补全HTTPS协议（若缺失）
-            [[ ! $CUSTOM_URL =~ ^http ]] && CUSTOM_URL="https://$CUSTOM_URL"
-            echo "🌐 目标网址：$CUSTOM_URL（来自config.txt）"
-          fi
-
-          # 处理应用名称特殊字符（避免构建错误）
-          APP_NAME_SAFE=$(echo "$APP_NAME" | sed 's/[^a-zA-Z0-9_-]/_/g')
-          [ -z "$APP_NAME_SAFE" ] && APP_NAME_SAFE="my_app_${RANDOM:0:4}"
-
-          # 输出最终配置（方便调试）
-          echo -e "\n📋 最终构建配置："
-          echo "   - 应用包名：$APP_PACKAGE"
-          echo "   - 应用名称：$APP_NAME（安全名称：$APP_NAME_SAFE）"
-          echo "   - 版本号：$APP_VERSION"
-          echo "   - 目标网址：$CUSTOM_URL"
-          echo "   - 加载超时：$LOAD_TIMEOUT ms"
-
-          # 保存配置到环境变量（后续步骤使用）
-          echo "APP_PACKAGE=$APP_PACKAGE" >> $GITHUB_ENV
-          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
-          echo "APP_NAME_SAFE=$APP_NAME_SAFE" >> $GITHUB_ENV
-          echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
-          echo "LOAD_TIMEOUT=$LOAD_TIMEOUT" >> $GITHUB_ENV
-          echo "CUSTOM_URL=$CUSTOM_URL" >> $GITHUB_ENV
-          # 定义项目路径
-          echo "PROJECT_ROOT=$GITHUB_WORKSPACE/myapp/android-project" >> $GITHUB_ENV
-          echo "APP_RES_DIR=$GITHUB_WORKSPACE/myapp/android-project/app/src/main/res" >> $GITHUB_ENV
-      ########################################################################
-      # 步骤4：创建项目目录结构
-      ########################################################################
-      - name: 创建项目目录结构
-        run: |
-          echo "✅ 开始创建项目目录：${{ env.PROJECT_ROOT }}"
-          # 创建核心目录（包含app模块和CordovaLib模块）
-          mkdir -p "${{ env.PROJECT_ROOT }}/app/src/main/java"
-          mkdir -p "${{ env.PROJECT_ROOT }}/CordovaLib/src/main/java/org/apache/cordova"
+          # 接受SDK许可协议
+          yes | sdkmanager --licenses
           
-          # 创建资源目录（含所有分辨率的图标目录）
-          mkdir -p "${{ env.APP_RES_DIR }}/mipmap-mdpi"
-          mkdir -p "${{ env.APP_RES_DIR }}/mipmap-hdpi"
-          mkdir -p "${{ env.APP_RES_DIR }}/mipmap-xhdpi"
-          mkdir -p "${{ env.APP_RES_DIR }}/mipmap-xxhdpi"
-          mkdir -p "${{ env.APP_RES_DIR }}/mipmap-xxxhdpi"
-          mkdir -p "${{ env.APP_RES_DIR }}/values"
-          
-          # 创建Java源码目录（按包名分层）
-          JAVA_DIR="${{ env.PROJECT_ROOT }}/app/src/main/java/$(echo ${{ env.APP_PACKAGE }} | tr '.' '/')"
-          mkdir -p "$JAVA_DIR"
-          echo "JAVA_DIR=$JAVA_DIR" >> $GITHUB_ENV
+          # 安装必要的SDK组件
+          sdkmanager "platforms;android-30" "build-tools;30.0.3" "platform-tools"
 
-          # 验证目录创建结果
-          echo -e "\n📁 项目目录结构（前5层）："
-          tree -L 5 "${{ env.PROJECT_ROOT }}"
-          # 强制检查关键目录是否存在（避免后续步骤失败）
-          if [ ! -d "${{ env.APP_RES_DIR }}/mipmap-mdpi" ] || [ ! -d "$JAVA_DIR" ]; then
-            echo "❌ 关键目录创建失败，终止构建"
-            exit 1
-          fi
-
-      ########################################################################
-      # 步骤5：生成应用图标和资源文件
-      ########################################################################
-      - name: 生成应用图标和资源文件
+      - name: 安装Gradle
         run: |
-          echo "✅ 开始生成资源文件（图标+配置）"
-          
-          # 1. 生成应用图标（覆盖所有分辨率，三重容错）
-          # 分辨率说明：mdpi(48x48)、hdpi(72x72)、xhdpi(96x96)、xxhdpi(144x144)、xxxhdpi(192x192)
-          declare -A ICON_SPECS=(
-            ["mdpi"]="48x48"
-            ["hdpi"]="72x72"
-            ["xhdpi"]="96x96"
-            ["xxhdpi"]="144x144"
-            ["xxxhdpi"]="192x192"
-          )
+          wget https://services.gradle.org/distributions/gradle-7.0.2-bin.zip -O gradle.zip
+          unzip -q gradle.zip -d /home/runner/
+          chmod +x "${{ env.GRADLE_PATH }}/bin/gradle"
+          echo "${{ env.GRADLE_PATH }}/bin" >> $GITHUB_PATH
+          gradle --version
 
-          for DPI in "${!ICON_SPECS[@]}"; do
-            SIZE=${ICON_SPECS[$DPI]}
-            DEST_DIR="${{ env.APP_RES_DIR }}/mipmap-$DPI"
-            DEST_PATH="$DEST_DIR/ic_launcher.png"
-            
-            # 确保图标目录存在（避免目录缺失导致生成失败）
-            if [ ! -d "$DEST_DIR" ]; then
-              mkdir -p "$DEST_DIR"
-              echo "📁 自动创建图标目录：$DEST_DIR"
-            fi
-            
-            # 方案1：生成带两层圆圈的图标（默认）
-            if convert -size "$SIZE" xc:transparent \
-              -fill "#2196F3" -draw "circle $((SIZE/2)),$((SIZE/2)) $((SIZE/2)),0" \
-              -fill "white" -draw "circle $((SIZE/2)),$((SIZE/2)) $((SIZE*3/10)),0" \
-              -fill "#2196F3" -draw "circle $((SIZE/2)),$((SIZE/2)) $((SIZE/10)),0" \
-              "$DEST_PATH"; then
-              echo "✅ 生成图标（默认方案）：$DEST_PATH"
-            else
-              # 方案2：生成圆角矩形图标（备选）
-              if convert -size "$SIZE" xc:"#2196F3" -roundrectangle 0,0,$SIZE,$SIZE,10,10 "$DEST_PATH"; then
-                echo "✅ 生成图标（备选方案1）：$DEST_PATH"
-              else
-                # 方案3：生成纯色图标（终极容错）
-                convert -size "$SIZE" xc:"#2196F3" "$DEST_PATH"
-                if [ -f "$DEST_PATH" ] && [ -s "$DEST_PATH" ]; then
-                  echo "✅ 生成图标（备选方案2）：$DEST_PATH"
-                else
-                  echo "❌ 所有图标生成方案失败，终止构建"
-                  exit 1
-                fi
-              fi
-            fi
-
-            # 最终验证图标有效性（避免空文件或损坏文件）
-            if [ ! -f "$DEST_PATH" ] || [ ! -s "$DEST_PATH" ]; then
-              echo "❌ 图标无效（不存在或空文件）：$DEST_PATH"
-              exit 1
-            fi
-            ls -lh "$DEST_PATH"  # 输出图标文件信息，方便调试
-          done
-
-          # 2. 生成strings.xml（应用名称配置）
-          STRINGS_FILE="${{ env.APP_RES_DIR }}/values/strings.xml"
-          cat > "$STRINGS_FILE" << EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">${{ env.APP_NAME }}</string>
-              <string name="launcher_name">${{ env.APP_NAME }}</string>
-              <string name="ic_launcher">ic_launcher</string> <!-- 关联图标资源 -->
-          </resources>
-          EOF
-          [ -f "$STRINGS_FILE" ] && echo "✅ 生成strings.xml" || { echo "❌ strings.xml生成失败"; exit 1; }
-
-          # 3. 生成styles.xml（应用样式配置）
-          STYLES_FILE="${{ env.APP_RES_DIR }}/values/styles.xml"
-          cat > "$STYLES_FILE" << EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
-                  <item name="android:windowNoTitle">true</item>
-                  <item name="android:windowActionBar">false</item>
-                  <item name="android:windowBackground">@android:color/white</item>
-              </style>
-          </resources>
-          EOF
-          [ -f "$STYLES_FILE" ] && echo "✅ 生成styles.xml" || { echo "❌ styles.xml生成失败"; exit 1; }
-
-          # 验证所有资源文件（确认生成结果）
-          echo -e "\n📄 生成的资源文件列表："
-          find "${{ env.APP_RES_DIR }}" -type f
-
-      ########################################################################
-      # 步骤6：生成Gradle配置文件（修复Task 'clean' not found + AndroidX支持）
-      ########################################################################
-      - name: 生成Gradle配置文件
+      - name: 创建项目结构
         run: |
-          echo "✅ 开始生成Gradle核心配置文件"
-          PROJECT_ROOT="${{ env.PROJECT_ROOT }}"
-
-          # 1. 生成gradle.properties（关键：启用AndroidX，解决依赖冲突）
-          GRADLE_PROPS_FILE="$PROJECT_ROOT/gradle.properties"
-          cat > "$GRADLE_PROPS_FILE" << EOF
-          # 启用AndroidX（必须，否则无法识别AndroidX依赖）
-          android.useAndroidX=true
-          # 禁用旧Support Library（避免与AndroidX冲突）
-          android.enableJetifier=true
-          # Gradle JVM配置（指定使用Java 11）
-          org.gradle.java.home=${{ env.JDK11_PATH }}
-          # 构建优化配置
-          org.gradle.daemon=true
-          org.gradle.parallel=true
-          org.gradle.configureondemand=true
-          org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m
-          EOF
-          [ -f "$GRADLE_PROPS_FILE" ] && echo "✅ 生成gradle.properties（已启用AndroidX）" || { echo "❌ gradle.properties生成失败"; exit 1; }
-
-          # 2. 生成根目录settings.gradle（定义项目模块）
-          SETTINGS_FILE="$PROJECT_ROOT/settings.gradle"
-          cat > "$SETTINGS_FILE" << EOF
-          rootProject.name = 'android-project'
-          include ':app'
-          include ':CordovaLib'
-          EOF
-          [ -f "$SETTINGS_FILE" ] && echo "✅ 生成settings.gradle" || { echo "❌ settings.gradle生成失败"; exit 1; }
-
-          # 3. 生成根目录build.gradle（配置项目级依赖）
-          ROOT_BUILD_FILE="$PROJECT_ROOT/build.gradle"
-          cat > "$ROOT_BUILD_FILE" << EOF
+          # 创建项目根目录下的build.gradle
+          cat > "${{ env.PROJECT_ROOT }}/build.gradle" << EOF
           buildscript {
               repositories {
                   google()
                   mavenCentral()
               }
               dependencies {
-                  classpath 'com.android.tools.build:gradle:4.2.2'  // 兼容Gradle 7.0.2 + AndroidX
+                  classpath 'com.android.tools.build:gradle:7.0.4'
               }
           }
-
+          
           allprojects {
               repositories {
                   google()
                   mavenCentral()
               }
           }
-
+          
           task clean(type: Delete) {
               delete rootProject.buildDir
           }
           EOF
-          [ -f "$ROOT_BUILD_FILE" ] && echo "✅ 生成根目录build.gradle" || { echo "❌ 根目录build.gradle生成失败"; exit 1; }
 
-          # 4. 生成app模块build.gradle（配置应用级依赖和构建参数）
-          APP_BUILD_FILE="$PROJECT_ROOT/app/build.gradle"
-          cat > "$APP_BUILD_FILE" << EOF
+          # 创建settings.gradle
+          cat > "${{ env.PROJECT_ROOT }}/settings.gradle" << EOF
+          include ':app', ':CordovaLib'
+          rootProject.name = '${{ env.APP_NAME_SAFE }}'
+          EOF
+
+          # 创建app模块的build.gradle
+          cat > "${{ env.PROJECT_ROOT }}/app/build.gradle" << EOF
           apply plugin: 'com.android.application'
-
+          
           android {
               compileSdkVersion 30
-              buildToolsVersion '30.0.2'
-
+              buildToolsVersion '30.0.3'
+              
               defaultConfig {
                   applicationId '${{ env.APP_PACKAGE }}'
                   minSdkVersion 21
                   targetSdkVersion 30
                   versionCode 1
                   versionName '${{ env.APP_VERSION }}'
-                  multiDexEnabled true  // 已启用AndroidX，此配置兼容
               }
-
-              buildTypes {
-                  release {
-                      minifyEnabled false
-                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-                      signingConfig null  // 生成未签名APK（简化流程）
-                  }
-              }
-
-              // 解决资源重复问题
-              packagingOptions {
-                  exclude 'META-INF/LICENSE'
-                  exclude 'META-INF/LICENSE.txt'
-                  exclude 'META-INF/NOTICE'
-                  exclude 'META-INF/NOTICE.txt'
-              }
-          }
-
-          dependencies {
-              implementation project(':CordovaLib')
-              implementation 'androidx.appcompat:appcompat:1.3.1'  // AndroidX依赖
-              implementation 'androidx.multidex:multidex:2.0.1'    // AndroidX依赖
-          }
-          EOF
-          [ -f "$APP_BUILD_FILE" ] && echo "✅ 生成app模块build.gradle" || { echo "❌ app模块build.gradle生成失败"; exit 1; }
-
-          # 5. 生成CordovaLib模块build.gradle（配置依赖库）
-          CORDOVALIB_BUILD_FILE="$PROJECT_ROOT/CordovaLib/build.gradle"
-          cat > "$CORDOVALIB_BUILD_FILE" << EOF
-          apply plugin: 'com.android.library'
-
-          android {
-              compileSdkVersion 30
-              buildToolsVersion '30.0.2'
-
-              defaultConfig {
-                  minSdkVersion 21
-                  targetSdkVersion 30
-                  versionCode 1
-                  versionName '1.0'
-              }
-
+              
               buildTypes {
                   release {
                       minifyEnabled false
                       proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
                   }
               }
+              
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
+              }
           }
-
+          
           dependencies {
-              implementation 'androidx.appcompat:appcompat:1.3.1'  // AndroidX依赖
+              implementation 'androidx.appcompat:appcompat:1.4.1'
+              implementation 'com.google.android.material:material:1.5.0'
+              implementation 'androidx.constraintlayout:constraintlayout:2.1.3'
           }
           EOF
-          [ -f "$CORDOVALIB_BUILD_FILE" ] && echo "✅ 生成CordovaLib模块build.gradle" || { echo "❌ CordovaLib模块build.gradle生成失败"; exit 1; }
 
-          # 6. 生成proguard-rules.pro（避免混淆核心类）
-          PROGUARD_FILE="$PROJECT_ROOT/app/proguard-rules.pro"
-          cat > "$PROGUARD_FILE" << EOF
-          # 保留WebView相关类不被混淆
-          -keep public class android.webkit.** { *; }
-          # 保留Cordova相关类不被混淆
-          -keep public class org.apache.cordova.** { *; }
-          # 保留AndroidX相关类不被混淆（新增）
-          -keep public class androidx.** { *; }
-          # 保留应用包名下的类不被混淆
-          -keep public class ${{ env.APP_PACKAGE }}.** { *; }
+          # 创建proguard-rules.pro
+          cat > "${{ env.PROJECT_ROOT }}/app/proguard-rules.pro" << EOF
+          # 保留WebView相关类
+          -keepclassmembers class * extends android.webkit.WebViewClient {
+              public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
+              public boolean *(android.webkit.WebView, java.lang.String);
+          }
+          -keepclassmembers class * extends android.webkit.WebChromeClient {
+              public void *(android.webkit.WebView, java.lang.String);
+          }
           EOF
-          [ -f "$PROGUARD_FILE" ] && echo "✅ 生成proguard-rules.pro（已添加AndroidX混淆规则）" || { echo "❌ proguard-rules.pro生成失败"; exit 1; }
 
-          # 验证所有Gradle配置文件
-          echo -e "\n📄 生成的Gradle配置文件列表："
-          find "$PROJECT_ROOT" -name "*.gradle" -o -name "settings.gradle" -o -name "gradle.properties" -o -name "proguard-rules.pro"
-      ########################################################################
-      # 步骤7：生成项目核心代码（修复CordovaLib配置）
-      ########################################################################
       - name: 生成项目核心代码
         run: |
-          # 1. 生成CordovaActivity（核心页面逻辑，不变）
+          # 1. 生成CordovaActivity
           CORDOVA_ACTIVITY="${{ env.PROJECT_ROOT }}/CordovaLib/src/main/java/org/apache/cordova/CordovaActivity.java"
+          mkdir -p $(dirname "$CORDOVA_ACTIVITY")
           cat > "$CORDOVA_ACTIVITY" << 'EOF'
           package org.apache.cordova;
           import android.app.Activity;
@@ -480,17 +171,17 @@ jobs:
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
           import android.net.http.SslError;
-
+          
           public class CordovaActivity extends Activity {
               private WebView webView;
-              private static final int LOAD_TIMEOUT = ${{ env.LOAD_TIMEOUT }};
-
+              private static final int LOAD_TIMEOUT = 80000;
+          
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   webView = new WebView(this);
                   WebSettings webSettings = webView.getSettings();
-
+          
                   // 启用JavaScript和DOM存储
                   webSettings.setJavaScriptEnabled(true);
                   webSettings.setDomStorageEnabled(true);
@@ -502,12 +193,12 @@ jobs:
                   webSettings.setDisplayZoomControls(false);
                   webSettings.setLoadWithOverviewMode(true);
                   webSettings.setUseWideViewPort(true);
-
+          
                   // 允许混合内容（HTTP+HTTPS）
                   if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                       webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                   }
-
+          
                   // 配置WebViewClient处理页面跳转和SSL
                   webView.setWebViewClient(new WebViewClient() {
                       @Override
@@ -515,19 +206,19 @@ jobs:
                           view.loadUrl(request.getUrl().toString());
                           return true;
                       }
-
+          
                       @Override
                       public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
                           handler.proceed(); // 忽略SSL错误（生产环境慎用）
                       }
                   });
-
+          
                   // 配置WebChromeClient处理JavaScript对话框
                   webView.setWebChromeClient(new WebChromeClient());
                   setContentView(webView);
-
+          
                   // 加载目标URL
-                  webView.loadUrl("${{ env.CUSTOM_URL }}");
+                  webView.loadUrl("http://cs.hs1314.cn");
                   
                   // 设置超时关闭页面
                   new android.os.Handler().postDelayed(() -> {
@@ -536,7 +227,7 @@ jobs:
                       }
                   }, LOAD_TIMEOUT);
               }
-
+          
               // 支持返回键导航
               @Override
               public void onBackPressed() {
@@ -549,20 +240,21 @@ jobs:
           }
           EOF
           [ -f "$CORDOVA_ACTIVITY" ] && echo "✅ 生成CordovaActivity.java" || exit 1
-
-          # 2. 生成app模块的AndroidManifest.xml（不变）
+          
+          # 2. 生成app模块的AndroidManifest.xml
           APP_MANIFEST_FILE="${{ env.PROJECT_ROOT }}/app/src/main/AndroidManifest.xml"
+          mkdir -p $(dirname "$APP_MANIFEST_FILE")
           cat > "$APP_MANIFEST_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              package="${{ env.APP_PACKAGE }}">
+              package="com.yjsyy.customapp">
               
               <!-- 必要权限声明 -->
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
               <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-
+          
               <application
                   android:allowBackup="true"
                   android:icon="@mipmap/ic_launcher"
@@ -586,8 +278,8 @@ jobs:
           </manifest>
           EOF
           [ -f "$APP_MANIFEST_FILE" ] && echo "✅ 生成app模块AndroidManifest.xml" || exit 1
-
-          # 3. 修复CordovaLib模块的AndroidManifest.xml（删除uses-sdk标签）
+          
+          # 3. 生成CordovaLib模块的AndroidManifest.xml
           CORDOVALIB_MANIFEST_DIR="${{ env.PROJECT_ROOT }}/CordovaLib/src/main"
           mkdir -p "$CORDOVALIB_MANIFEST_DIR" || { echo "❌ 创建CordovaLib目录失败"; exit 1; }
           CORDOVALIB_MANIFEST_FILE="$CORDOVALIB_MANIFEST_DIR/AndroidManifest.xml"
@@ -596,7 +288,6 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="org.apache.cordova">
-              <!-- 关键修复：删除原有的uses-sdk标签（SDK版本移至build.gradle配置） -->
               <application
                   android:allowBackup="true"
                   android:supportsRtl="true" />
@@ -604,47 +295,40 @@ jobs:
           EOF
           
           if [ -f "$CORDOVALIB_MANIFEST_FILE" ] && [ -s "$CORDOVALIB_MANIFEST_FILE" ]; then
-            echo "✅ 生成CordovaLib模块AndroidManifest.xml（已删除uses-sdk）"
+            echo "✅ 生成CordovaLib模块AndroidManifest.xml"
           else
             echo "❌ CordovaLib模块AndroidManifest.xml生成失败"
             exit 1
           fi
-
-          # 4. 新增：生成CordovaLib模块的build.gradle（核心修复，配置SDK版本和依赖）
+          
+          # 4. 生成CordovaLib模块的build.gradle
           CORDOVALIB_BUILD_GRADLE="${{ env.PROJECT_ROOT }}/CordovaLib/build.gradle"
+          mkdir -p $(dirname "$CORDOVALIB_BUILD_GRADLE")
           cat > "$CORDOVALIB_BUILD_GRADLE" << EOF
-          // CordovaLib作为Android库模块（library），需配置插件和SDK版本
           apply plugin: 'com.android.library'
-
+          
           android {
-              // 编译SDK版本（与app模块保持一致）
               compileSdkVersion 30
-
+          
               defaultConfig {
-                  // 关键：在build.gradle中配置SDK版本（替代Manifest中的uses-sdk）
                   minSdkVersion 21
                   targetSdkVersion 30
                   versionCode 1
                   versionName "1.0"
-
-                  // 避免Lint检查警告
                   testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
               }
-
-              // 编译选项（与Java版本匹配）
+          
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_1_8
                   targetCompatibility JavaVersion.VERSION_1_8
               }
-
-              // Lint配置：仅忽略无关警告（可选，确保核心错误不被忽略）
+          
               lintOptions {
-                  abortOnError true // 保留错误终止构建的逻辑，确保代码质量
-                  disable 'GradleDependency' // 忽略依赖相关的非关键警告
+                  abortOnError true
+                  disable 'GradleDependency'
               }
           }
-
-          // 依赖配置：CordovaLib需依赖AndroidX核心库（支持Activity等组件）
+          
           dependencies {
               implementation 'androidx.appcompat:appcompat:1.4.1'
               testImplementation 'junit:junit:4.13.2'
@@ -654,13 +338,13 @@ jobs:
           EOF
           
           if [ -f "$CORDOVALIB_BUILD_GRADLE" ] && [ -s "$CORDOVALIB_BUILD_GRADLE" ]; then
-            echo "✅ 生成CordovaLib模块build.gradle（已配置SDK版本）"
+            echo "✅ 生成CordovaLib模块build.gradle"
           else
             echo "❌ CordovaLib模块build.gradle生成失败"
             exit 1
           fi
-
-          # 5. 生成默认应用图标（mipmap/ic_launcher）- 已修复语法，无需修改
+          
+          # 5. 生成默认应用图标
           MIPMAP_DIR="${{ env.PROJECT_ROOT }}/app/src/main/res/mipmap-anydpi-v26"
           mkdir -p "$MIPMAP_DIR" || { echo "❌ 创建mipmap目录失败"; exit 1; }
           
@@ -680,31 +364,31 @@ jobs:
           EOF
           
           if [ -f "$LAUNCHER_ICON" ] && [ -s "$LAUNCHER_ICON" ]; then
-            echo "✅ 生成默认应用图标：$LAUNCHER_ICON"
+            echo "✅ 生成默认应用图标"
           else
             echo "❌ 应用图标生成失败"
             exit 1
           fi
-
-          # 6. 生成字符串资源（解决app_name引用，不变）
+          
+          # 6. 生成字符串资源
           VALUES_DIR="${{ env.PROJECT_ROOT }}/app/src/main/res/values"
           mkdir -p "$VALUES_DIR" || { echo "❌ 创建values目录失败"; exit 1; }
           STRINGS_FILE="$VALUES_DIR/strings.xml"
           cat > "$STRINGS_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
-              <string name="app_name">${{ env.APP_NAME }}</string>  <!-- 应用名称 -->
+              <string name="app_name">YJSYY_CSDH</string>
           </resources>
           EOF
           
           if [ -f "$STRINGS_FILE" ] && [ -s "$STRINGS_FILE" ]; then
-            echo "✅ 生成字符串资源：$STRINGS_FILE"
+            echo "✅ 生成字符串资源"
           else
             echo "❌ 字符串资源生成失败"
             exit 1
           fi
-
-          # 7. 生成主题资源（解决AppTheme引用，不变）
+          
+          # 7. 生成主题资源
           STYLES_FILE="$VALUES_DIR/styles.xml"
           cat > "$STYLES_FILE" << EOF
           <?xml version="1.0" encoding="utf-8"?>
@@ -720,68 +404,32 @@ jobs:
           EOF
           
           if [ -f "$STYLES_FILE" ] && [ -s "$STYLES_FILE" ]; then
-            echo "✅ 生成主题资源：$STYLES_FILE"
+            echo "✅ 生成主题资源"
           else
             echo "❌ 主题资源生成失败"
             exit 1
           fi
-
-          # 8. 验证app模块build.gradle（确保已依赖CordovaLib，若之前未配置需补充）
+          
+          # 8. 添加CordovaLib依赖到app模块
           APP_BUILD_GRADLE="${{ env.PROJECT_ROOT }}/app/build.gradle"
-          # 检查是否已包含CordovaLib依赖，若无则添加
           if ! grep -q "implementation project(':CordovaLib')" "$APP_BUILD_GRADLE"; then
             echo "📝 为app模块添加CordovaLib依赖"
-            # 在dependencies块末尾添加依赖（若dependencies块不存在则创建）
             if grep -q "dependencies {" "$APP_BUILD_GRADLE"; then
-              sed -i '/dependencies {/a \    implementation project(\':CordovaLib\')' "$APP_BUILD_GRADLE"
+              sed -i.bak '/dependencies {/a \    implementation project(":CordovaLib")' "$APP_BUILD_GRADLE"
+              rm -f "$APP_BUILD_GRADLE.bak"  # 删除备份文件
             else
-              echo -e "\ndependencies {\n    implementation project(':CordovaLib')\n}" >> "$APP_BUILD_GRADLE"
+              echo -e "\ndependencies {\n    implementation project(\":CordovaLib\")\n}" >> "$APP_BUILD_GRADLE"
             fi
           fi
-          echo "✅ 验证app模块build.gradle完成（已包含CordovaLib依赖）"
-      ########################################################################
-      # 步骤8：构建安卓应用（修复Task 'clean' not found错误 + Java版本兼容）
-      ########################################################################
-      - name: 构建安卓应用
+          echo "✅ 验证app模块build.gradle完成"
+
+      - name: 构建Release版本
         run: |
           cd ${{ env.PROJECT_ROOT }}
-          # 关键修复：强制指定Gradle使用JDK 11（避免使用系统默认的Java 17）
-          export JAVA_HOME=${{ env.JDK11_PATH }}
-          echo "当前使用的Java路径：$JAVA_HOME"
-          echo "当前Java版本：$(java -version 2>&1)"
-          
-          # 验证Gradle任务是否可用
-          echo "📋 可用的Gradle任务列表："
-          gradle tasks --all || { echo "❌ Gradle任务列表获取失败"; exit 1; }
-          
-          # 执行构建（先清理再构建Release版本）
-          echo "🚀 开始构建APK..."
-          gradle clean :app:assembleRelease --stacktrace
-          
-          # 查找生成的APK文件
-          APK_PATH=$(find . -name "*.apk" | grep -E "app-release\.apk$" | head -n 1)
-          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
-            echo "❌ APK构建失败，未找到输出文件"
-            # 输出构建目录结构辅助调试
-            echo "📂 构建目录文件列表："
-            find . -name "*.apk"
-            exit 1
-          fi
-          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
-          echo "✅ APK构建成功：$APK_PATH"
-          # 输出APK信息
-          ls -lh "$APK_PATH"
+          gradle clean assembleRelease --stacktrace
 
-      ########################################################################
-      # 步骤9：上传构建产物到Release
-      ########################################################################
-      - name: 上传构建产物到Release
-        uses: softprops/action-gh-release@v1
+      - name: 上传APK产物
+        uses: actions/upload-artifact@v3
         with:
-          files: ${{ env.APK_PATH }}
-          name: ${{ env.APP_NAME_SAFE }}_v${{ env.APP_VERSION }}
-          tag_name: v${{ env.APP_VERSION }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: app-release-apk
+          path: ${{ env.PROJECT_ROOT }}/app/build/outputs/apk/release/app-release.apk
