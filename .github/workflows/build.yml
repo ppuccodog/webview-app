@@ -224,27 +224,34 @@ jobs:
             exit 1
           fi
 
-            ########################################################################
-      # 步骤5：生成应用图标和资源文件（修复关联数组注释错误）
+      ########################################################################
+      # 步骤5：生成应用图标和资源文件（彻底修复关联数组注释错误）
       ########################################################################
       - name: 生成应用图标和资源文件
         run: |
           echo "✅ 开始生成资源文件（图标+配置）"
           
           # 1. 生成应用图标（覆盖所有分辨率，三重容错）
-          # 修复：移除数组注释中的中文/特殊字符，避免Bash解析错误
+          # 分辨率说明：mdpi(48x48)、hdpi(72x72)、xhdpi(96x96)、xxhdpi(144x144)、xxxhdpi(192x192)
+          # 修复：数组内仅保留键值对，注释统一放在数组外
           declare -A ICON_SPECS=(
-            ["mdpi"]="48x48"    # Base resolution
-            ["hdpi"]="72x72"    # High density
-            ["xhdpi"]="96x96"   # Extra high density
-            ["xxhdpi"]="144x144"# 2x extra high density
-            ["xxxhdpi"]="192x192"# 3x extra high density
+            ["mdpi"]="48x48"
+            ["hdpi"]="72x72"
+            ["xhdpi"]="96x96"
+            ["xxhdpi"]="144x144"
+            ["xxxhdpi"]="192x192"
           )
 
           for DPI in "${!ICON_SPECS[@]}"; do
             SIZE=${ICON_SPECS[$DPI]}
             DEST_DIR="${{ env.APP_RES_DIR }}/mipmap-$DPI"
             DEST_PATH="$DEST_DIR/ic_launcher.png"
+            
+            # 确保图标目录存在（避免目录缺失导致生成失败）
+            if [ ! -d "$DEST_DIR" ]; then
+              mkdir -p "$DEST_DIR"
+              echo "📁 自动创建图标目录：$DEST_DIR"
+            fi
             
             # 方案1：生成带两层圆圈的图标（默认）
             if convert -size "$SIZE" xc:transparent \
@@ -269,12 +276,12 @@ jobs:
               fi
             fi
 
-            # 最终验证图标有效性
+            # 最终验证图标有效性（避免空文件或损坏文件）
             if [ ! -f "$DEST_PATH" ] || [ ! -s "$DEST_PATH" ]; then
               echo "❌ 图标无效（不存在或空文件）：$DEST_PATH"
               exit 1
             fi
-            ls -lh "$DEST_PATH"
+            ls -lh "$DEST_PATH"  # 输出图标文件信息，方便调试
           done
 
           # 2. 生成strings.xml（应用名称配置）
@@ -284,7 +291,7 @@ jobs:
           <resources>
               <string name="app_name">${{ env.APP_NAME }}</string>
               <string name="launcher_name">${{ env.APP_NAME }}</string>
-              <string name="ic_launcher">ic_launcher</string> <!-- 显式关联图标资源 -->
+              <string name="ic_launcher">ic_launcher</string> <!-- 关联图标资源 -->
           </resources>
           EOF
           [ -f "$STRINGS_FILE" ] && echo "✅ 生成strings.xml" || { echo "❌ strings.xml生成失败"; exit 1; }
@@ -303,7 +310,7 @@ jobs:
           EOF
           [ -f "$STYLES_FILE" ] && echo "✅ 生成styles.xml" || { echo "❌ styles.xml生成失败"; exit 1; }
 
-          # 验证所有资源文件
+          # 验证所有资源文件（确认生成结果）
           echo -e "\n📄 生成的资源文件列表："
           find "${{ env.APP_RES_DIR }}" -type f
 
