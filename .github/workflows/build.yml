@@ -1,4 +1,4 @@
-name: 安卓自定义APP自动构建（彻底修复图标问题）
+name: 安卓自定义APP自动构建（修复Gradle执行问题）
 on:
   workflow_dispatch:  # 手动触发构建
 permissions:
@@ -20,13 +20,16 @@ jobs:
       - name: 安装核心依赖工具
         run: |
           sudo apt-get update -y
-          # 安装基础工具（移除字体依赖）
           sudo apt-get install -y xmlstarlet imagemagick openjdk-11-jdk tree
           # 配置JDK环境
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
+          
+          # 验证Java安装
+          java -version
+          javac -version
 
       ########################################################################
-      # 步骤2：配置Android SDK+Gradle环境
+      # 步骤2：配置Android SDK+Gradle环境（重点修复）
       ########################################################################
       - name: 配置Android构建环境
         run: |
@@ -63,16 +66,43 @@ jobs:
             "extras;android;m2repository" \
             --verbose --no_https || exit 1
 
-          # 5. 安装Gradle 7.0.2
-          GRADLE_PATH="$HOME/gradle-7.0.2"
-          if [ ! -d "$GRADLE_PATH" ]; then
-            GRADLE_URL="https://services.gradle.org/distributions/gradle-7.0.2-bin.zip"
-            if ! wget --timeout=$TIMEOUT --tries=3 "$GRADLE_URL" -O gradle.zip; then
-              echo "❌ 下载Gradle失败，重试1次"
-              wget --timeout=$TIMEOUT --tries=2 "$GRADLE_URL" -O gradle.zip || exit 1
-            fi
-            unzip -q gradle.zip -d "$HOME"
+          # 5. 安装并验证Gradle 7.0.2（重点修复部分）
+          GRADLE_VERSION="7.0.2"
+          GRADLE_PATH="$HOME/gradle-$GRADLE_VERSION"
+          GRADLE_URL="https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip"
+          
+          # 确保干净的安装
+          rm -rf "$GRADLE_PATH"
+          
+          # 下载并验证Gradle
+          if ! wget --timeout=$TIMEOUT --tries=3 "$GRADLE_URL" -O gradle.zip; then
+            echo "❌ 下载Gradle失败，重试1次"
+            wget --timeout=$TIMEOUT --tries=2 "$GRADLE_URL" -O gradle.zip || exit 1
           fi
+          
+          # 验证压缩包完整性
+          unzip -t gradle.zip || {
+            echo "❌ Gradle压缩包损坏，删除并重试"
+            rm gradle.zip
+            wget "$GRADLE_URL" -O gradle.zip || exit 1
+            unzip -t gradle.zip || {
+              echo "❌ 再次验证失败，Gradle压缩包损坏"
+              exit 1
+            }
+          }
+          
+          # 解压并设置权限
+          unzip -q gradle.zip -d "$HOME"
+          chmod -R 755 "$GRADLE_PATH"
+          
+          # 验证Gradle安装
+          echo "✅ 验证Gradle版本："
+          "$GRADLE_PATH/bin/gradle" --version || {
+            echo "❌ Gradle安装失败"
+            exit 1
+          }
+          
+          # 配置环境变量
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
@@ -104,11 +134,16 @@ jobs:
 
           # 处理应用名称特殊字符
           APP_NAME_SAFE=$(echo "$APP_NAME" | sed 's/[^a-zA-Z0-9_-]/_/g')
+          # 确保名称不为空
+          if [ -z "$APP_NAME_SAFE" ]; then
+            APP_NAME_SAFE="my_app"
+          fi
 
           # 输出配置信息
           echo -e "\n✅ 最终配置："
           echo "   - 包名：$APP_PACKAGE"
           echo "   - 应用名称：$APP_NAME"
+          echo "   - 安全名称：$APP_NAME_SAFE"
           echo "   - 版本：$APP_VERSION"
           echo "   - 目标网址：$CUSTOM_URL"
 
@@ -121,9 +156,9 @@ jobs:
           echo "CUSTOM_URL=$CUSTOM_URL" >> $GITHUB_ENV
 
       ########################################################################
-      # 步骤4：生成应用图标（彻底解决字体问题）
+      # 步骤4：生成应用图标（纯图形方式）
       ########################################################################
-      - name: 生成应用图标（纯图形方式，不依赖字体）
+      - name: 生成应用图标（纯图形方式）
         run: |
           # 1. 初始化资源目录
           RES_DIR="$GITHUB_WORKSPACE/myapp/android-project/app/src/main/res"
@@ -139,12 +174,12 @@ jobs:
             ["xxxhdpi"]="192x192"
           )
 
-          # 3. 生成纯图形图标（不使用任何文字，彻底避免字体问题）
+          # 3. 生成纯图形图标
           for DPI in "${!ICON_SPECS[@]}"; do
             SIZE=${ICON_SPECS[$DPI]}
             DEST_PATH="$RES_DIR/mipmap-$DPI/ic_launcher.png"
             
-            # 计算图标元素尺寸（按比例计算，适应不同分辨率）
+            # 计算图标元素尺寸
             let "outer_radius = ${SIZE%x*} / 2"
             let "inner_radius = outer_radius * 3 / 5"
             let "dot_radius = outer_radius / 5"
@@ -461,35 +496,61 @@ jobs:
           -dontwarn androidx.**
           EOF
 
-          # Gradle wrapper配置
+          # 正确配置Gradle wrapper（使用已安装的Gradle）
           mkdir -p "$ANDROID_ROOT/gradle/wrapper"
-          cat > "$ANDROID_ROOT/gradle/wrapper/gradle-wrapper.properties" << 'EOF'
+          cat > "$ANDROID_ROOT/gradle/wrapper/gradle-wrapper.properties" << EOF
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
-          distributionUrl=https://services.gradle.org/distributions/gradle-7.0.2-bin.zip
+          distributionUrl=${{ env.GRADLE_URL }}
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           EOF
           
-          # 复制Gradle可执行文件
-          cp "$HOME/gradle-7.0.2/bin/gradle" "$ANDROID_ROOT/gradlew"
+          # 创建正确的gradlew脚本
+          cat > "$ANDROID_ROOT/gradlew" << 'EOF'
+          #!/usr/bin/env sh
+          GRADLE_HOME="${HOME}/gradle-7.0.2"
+          export PATH="$GRADLE_HOME/bin:$PATH"
+          exec gradle "$@"
+          EOF
           chmod +x "$ANDROID_ROOT/gradlew"
 
+          # 验证项目Gradle配置
+          echo "✅ 验证项目Gradle版本："
+          cd "$ANDROID_ROOT" && ./gradlew --version
+
       ########################################################################
-      # 步骤6：编译与发布
+      # 步骤6：编译与发布（使用绝对路径调用Gradle）
       ########################################################################
       - name: 编译APK
         run: |
           export JAVA_HOME="${{ env.JDK11_PATH }}"
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
+          export GRADLE_HOME="${{ env.GRADLE_PATH }}"
+          export PATH="$GRADLE_HOME/bin:$PATH"
           
           PROJECT_DIR="$GITHUB_WORKSPACE/myapp/android-project"
           cd "$PROJECT_DIR" || { echo "❌ 项目目录不存在"; exit 1; }
           
-          # 构建APK
-          ./gradlew clean :app:assembleRelease --stacktrace --info || {
+          # 显示环境信息用于调试
+          echo "✅ 环境信息："
+          echo "JAVA_HOME: $JAVA_HOME"
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "GRADLE_HOME: $GRADLE_HOME"
+          echo "PATH: $PATH"
+          echo "Gradle版本："
+          gradle --version
+          
+          # 使用绝对路径调用Gradle构建
+          echo "✅ 开始构建APK..."
+          "$GRADLE_HOME/bin/gradle" clean :app:assembleRelease --stacktrace --info || {
             echo "❌ 编译失败，查看详细日志："
-            cat "$PROJECT_DIR/app/build/reports/lint-results-release.xml"
+            # 检查日志文件是否存在
+            if [ -f "$PROJECT_DIR/app/build/reports/lint-results-release.xml" ]; then
+              cat "$PROJECT_DIR/app/build/reports/lint-results-release.xml"
+            else
+              echo "⚠️ 未找到lint报告文件"
+            fi
             exit 1
           }
           
