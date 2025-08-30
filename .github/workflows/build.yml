@@ -135,16 +135,17 @@ jobs:
           APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
           APP_VERSION_CODE="${{ env.APP_VERSION_CODE }}"
 
-          # 动态创建项目目录（按包名生成Java目录结构，如 com.abc.app → com/abc/app）
+          # 动态创建项目目录（按包名生成Java目录结构，如 com.my.app → com/my/app）
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
-          APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"  # 包名转目录路径
+          # 动态生成Java包名目录（将包名的.替换为/）
+          APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"
           
           # 清理旧项目残留并创建新目录
           rm -rf "$PROJECT_PATH"
-          mkdir -p "$APP_JAVA_DIR"
+          mkdir -p "$APP_JAVA_DIR"  # 动态包名目录
           mkdir -p "$APP_DIR/src/main/res/values"
           mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
 
@@ -312,47 +313,47 @@ jobs:
           </resources>
           EOF
 
-          # 5. 生成Gradle基础配置（gradle.properties）
+          # 5. 生成Gradle基础配置（gradle.properties）- 修复注释格式（用#替代<!-- -->）
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
-          android.useAndroidX=true  <!-- 启用AndroidX支持 -->
+          android.useAndroidX=true  # 启用AndroidX支持（正确注释格式）
           android.enableJetifier=false
-          org.gradle.jvmargs=-Xmx1536m  <!-- 配置Gradle内存 -->
-          org.gradle.parallel=true  <!-- 启用并行构建（加速） -->
+          org.gradle.jvmargs=-Xmx1536m  # 配置Gradle内存（避免OOM，正确注释格式）
+          org.gradle.parallel=true  # 启用并行构建（加速，正确注释格式）
           EOF
 
           # 6. 生成模块依赖配置（settings.gradle）
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
-          include ':app', ':CordovaLib'  <!-- 包含主应用和CordovaLib库模块 -->
+          include ':app', ':CordovaLib'  # 包含主应用和CordovaLib库模块
           EOF
 
           # 7. 生成 CordovaLib 库模块配置（build.gradle）
           cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           buildscript {
               repositories {
-                  maven { url 'https://maven.aliyun.com/repository/google' }  // 阿里云镜像（加速依赖下载）
+                  maven { url 'https://maven.aliyun.com/repository/google' }  # 阿里云镜像（加速依赖下载）
                   maven { url 'https://maven.aliyun.com/repository/public' }
                   mavenCentral()
               }
               dependencies {
-                  classpath 'com.android.tools.build:gradle:7.0.4'  // 适配Gradle 7.0.2的构建工具
+                  classpath 'com.android.tools.build:gradle:7.0.4'  # 适配Gradle 7.0.2的构建工具
               }
           }
-          apply plugin: 'com.android.library'  // 声明为库模块
+          apply plugin: 'com.android.library'  # 声明为库模块
           
           android {
-              compileSdk 30  // 编译SDK版本（与主应用一致）
-              namespace 'org.apache.cordova'  // 库模块固定命名空间
+              compileSdk 30  # 编译SDK版本（与主应用一致）
+              namespace 'org.apache.cordova'  # 库模块固定命名空间
               
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/google' }
                   maven { url 'https://maven.aliyun.com/repository/public' }
               }
               
-              lintOptions { abortOnError false }  // 忽略Lint非致命错误（避免构建中断）
+              lintOptions { abortOnError false }  # 忽略Lint非致命错误（避免构建中断）
           }
           
           dependencies {
-              implementation 'androidx.appcompat:appcompat:1.0.2'  // 基础UI依赖
+              implementation 'androidx.appcompat:appcompat:1.0.2'  # 基础UI依赖
           }
           EOF
 
@@ -367,29 +368,29 @@ jobs:
                   classpath 'com.android.tools.build:gradle:7.0.4'
               }
           }
-          apply plugin: 'com.android.application'  // 声明为主应用模块
+          apply plugin: 'com.android.application'  # 声明为主应用模块
           
           android {
-              compileSdk 30  // 编译SDK版本
-              namespace '$APP_PACKAGE'  // 动态注入应用包名（匹配配置）
+              compileSdk 30  # 编译SDK版本
+              namespace '$APP_PACKAGE'  # 动态注入应用包名（匹配配置）
               
               defaultConfig {
-                  applicationId "$APP_PACKAGE"  // 应用唯一标识（包名）
-                  minSdk 21  // 最低支持Android 5.0
-                  targetSdk 30  // 目标Android版本
-                  versionCode $APP_VERSION_CODE  // 动态注入版本号（整数）
-                  versionName "$APP_VERSION_NAME"  // 动态注入版本名称（字符串）
+                  applicationId "$APP_PACKAGE"  # 应用唯一标识（包名）
+                  minSdk 21  # 最低支持Android 5.0
+                  targetSdk 30  # 目标Android版本
+                  versionCode $APP_VERSION_CODE  # 动态注入版本号（整数）
+                  versionName "$APP_VERSION_NAME"  # 动态注入版本名称（字符串）
               }
               
               buildTypes {
                   release {
-                      minifyEnabled false  // 关闭代码混淆（简化测试，生产环境可开启）
-                      signingConfig signingConfigs.debug  // 使用调试签名（快速构建）
+                      minifyEnabled false  # 关闭代码混淆（简化测试，生产环境可开启）
+                      signingConfig signingConfigs.debug  # 使用调试签名（快速构建）
                       proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
                   }
               }
               
-              lintOptions { abortOnError false }  // 忽略Lint非致命错误
+              lintOptions { abortOnError false }  # 忽略Lint非致命错误
               
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/google' }
@@ -398,8 +399,8 @@ jobs:
           }
           
           dependencies {
-              implementation project(':CordovaLib')  // 依赖CordovaLib库模块
-              implementation 'androidx.appcompat:appcompat:1.0.2'  // 基础UI依赖
+              implementation project(':CordovaLib')  # 依赖CordovaLib库模块
+              implementation 'androidx.appcompat:appcompat:1.0.2'  # 基础UI依赖
           }
           EOF
 
