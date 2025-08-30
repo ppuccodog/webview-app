@@ -1,4 +1,4 @@
-name: 安卓浏览器式套壳应用构建+自动发版
+name: 安卓浏览器式套壳壳应用构建+自动发版
 on:
   workflow_dispatch:
 permissions:
@@ -135,21 +135,20 @@ jobs:
           APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
           APP_VERSION_CODE="${{ env.APP_VERSION_CODE }}"
 
-          # 动态创建项目目录（按包名生成Java目录结构，如 com.my.app → com/my/app）
+          # 动态创建项目目录（按包名生成Java目录结构）
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
-          # 动态生成Java包名目录（将包名的.替换为/）
           APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"
           
           # 清理旧项目残留并创建新目录
           rm -rf "$PROJECT_PATH"
-          mkdir -p "$APP_JAVA_DIR"  # 动态包名目录
+          mkdir -p "$APP_JAVA_DIR"
           mkdir -p "$APP_DIR/src/main/res/values"
           mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
 
-          # 1. 生成 WebView 核心逻辑（CordovaActivity.java）- 加载配置的网址
+          # 1. 生成 WebView 核心逻辑（CordovaActivity.java）
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/CordovaActivity.java" << EOF
           package org.apache.cordova;
           import android.app.Activity;
@@ -170,60 +169,50 @@ jobs:
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   
-                  // 初始化WebView并配置基础参数
                   webView = new WebView(this);
                   WebSettings webSettings = webView.getSettings();
                   
-                  // 启用JS和DOM存储（支持网页交互功能）
                   webSettings.setJavaScriptEnabled(true);
                   webSettings.setDomStorageEnabled(true);
                   webSettings.setAllowFileAccess(true);
                   webSettings.setAllowContentAccess(true);
                   
-                  // 允许HTTP+HTTPS混合内容（解决部分网页资源加载失败）
                   if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                       webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                   }
                   
-                  // 屏幕适配：支持缩放、自适应屏幕
                   webSettings.setSupportZoom(true);
                   webSettings.setBuiltInZoomControls(true);
                   webSettings.setDisplayZoomControls(false);
                   webSettings.setLoadWithOverviewMode(true);
                   webSettings.setUseWideViewPort(true);
                   
-                  // 模拟标准浏览器UA（避免被识别为WebView导致功能限制）
                   webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.101 Mobile Safari/537.36");
                   
-                  // 处理链接跳转和SSL证书（调试用，忽略SSL错误）
                   webView.setWebViewClient(new WebViewClient() {
                       @Override
                       public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                          view.loadUrl(request.getUrl().toString());  // 所有链接内部打开
+                          view.loadUrl(request.getUrl().toString());
                           return true;
                       }
                       
                       @Override
                       public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-                          handler.proceed();  // 忽略SSL错误（生产环境需移除）
+                          handler.proceed();
                       }
                       
-                      // 资源加载失败提示
                       @Override
                       public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
                           Toast.makeText(CordovaActivity.this, "资源加载失败: " + description, Toast.LENGTH_LONG).show();
                       }
                   });
                   
-                  // 支持JavaScript弹窗（alert/confirm等）
                   webView.setWebChromeClient(new WebChromeClient());
 
-                  // 加载 config.txt 中配置的目标网址
                   webView.loadUrl("$CUSTOM_URL");
                   setContentView(webView);
               }
               
-              // 返回键支持：网页可后退时后退，否则退出应用
               @Override
               public void onBackPressed() {
                   if (webView.canGoBack()) {
@@ -233,21 +222,18 @@ jobs:
                   }
               }
               
-              // 应用暂停时暂停网页加载
               @Override
               protected void onPause() {
                   super.onPause();
                   webView.onPause();
               }
               
-              // 应用恢复时恢复网页加载
               @Override
               protected void onResume() {
                   super.onResume();
                   webView.onResume();
               }
               
-              // 应用销毁时释放WebView资源
               @Override
               protected void onDestroy() {
                   if (webView != null) {
@@ -258,36 +244,34 @@ jobs:
           }
           EOF
 
-          # 2. 生成主活动（MainActivity.java）- 包名匹配 config.txt 配置
+          # 2. 生成主活动（MainActivity.java）
           cat > "$APP_JAVA_DIR/MainActivity.java" << EOF
-          package $APP_PACKAGE;  // 动态注入配置的包名
+          package $APP_PACKAGE;
           import org.apache.cordova.CordovaActivity;
-          public class MainActivity extends CordovaActivity {}  // 继承WebView核心逻辑
+          public class MainActivity extends CordovaActivity {}
           EOF
 
-          # 3. 生成清单文件（AndroidManifest.xml）- 包名/应用名动态配置
+          # 3. 生成清单文件（AndroidManifest.xml）
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-                    package="$APP_PACKAGE">  <!-- 动态注入包名 -->
+                    package="$APP_PACKAGE">
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
               
-              <!-- 浏览器必要权限：网络访问、网络状态、WiFi状态 -->
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
               
               <application
-                  android:label="$APP_NAME"  <!-- 动态注入应用名 -->
+                  android:label="$APP_NAME"
                   android:theme="@style/AppTheme"
-                  android:hardwareAccelerated="true"  <!-- 启用硬件加速（优化WebView） -->
-                  android:usesCleartextTraffic="true">  <!-- 允许HTTP明文请求 -->
+                  android:hardwareAccelerated="true"
+                  android:usesCleartextTraffic="true">
                   
-                  <!-- 主活动配置：启动入口 + 支持网页链接打开 -->
                   <activity 
                       android:name=".MainActivity"
-                      android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"  <!-- 配置变更不重建活动 -->
-                      android:launchMode="singleTask">  <!-- 单任务模式（避免多实例） -->
+                      android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"
+                      android:launchMode="singleTask">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
@@ -304,60 +288,65 @@ jobs:
           </manifest>
           EOF
 
-          # 4. 生成字符串资源（strings.xml）- 应用名动态配置
+          # 4. 生成字符串资源（strings.xml）
           cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
-              <string name="app_name">$APP_NAME</string>  <!-- 动态注入应用名 -->
-              <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>  <!-- 无标题栏主题 -->
+              <string name="app_name">$APP_NAME</string>
+              <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
           </resources>
           EOF
 
-          # 5. 生成Gradle基础配置（gradle.properties）- 修复注释格式（用#替代<!-- -->）
+          # 5. 生成Gradle基础配置（gradle.properties）- 注释单独成行（核心修复）
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
-          android.useAndroidX=true  # 启用AndroidX支持（正确注释格式）
+          # 启用AndroidX支持
+          android.useAndroidX=true
           android.enableJetifier=false
-          org.gradle.jvmargs=-Xmx1536m  # 配置Gradle内存（避免OOM，正确注释格式）
-          org.gradle.parallel=true  # 启用并行构建（加速，正确注释格式）
+          
+          # 配置Gradle内存（避免OOM）
+          org.gradle.jvmargs=-Xmx1536m
+          
+          # 启用并行构建（加速）
+          org.gradle.parallel=true
           EOF
 
           # 6. 生成模块依赖配置（settings.gradle）
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
-          include ':app', ':CordovaLib'  # 包含主应用和CordovaLib库模块
+          include ':app', ':CordovaLib'
           EOF
 
           # 7. 生成 CordovaLib 库模块配置（build.gradle）
           cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           buildscript {
               repositories {
-                  maven { url 'https://maven.aliyun.com/repository/google' }  # 阿里云镜像（加速依赖下载）
+                  maven { url 'https://maven.aliyun.com/repository/google' }
                   maven { url 'https://maven.aliyun.com/repository/public' }
                   mavenCentral()
               }
               dependencies {
-                  classpath 'com.android.tools.build:gradle:7.0.4'  # 适配Gradle 7.0.2的构建工具
+                  classpath 'com.android.tools.build:gradle:7.0.4'
               }
           }
-          apply plugin: 'com.android.library'  # 声明为库模块
+          apply plugin: 'com.android.library'
           
           android {
-              compileSdk 30  # 编译SDK版本（与主应用一致）
-              namespace 'org.apache.cordova'  # 库模块固定命名空间
+              compileSdk 30
+              namespace 'org.apache.cordova'
               
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/google' }
                   maven { url 'https://maven.aliyun.com/repository/public' }
               }
               
-              lintOptions { abortOnError false }  # 忽略Lint非致命错误（避免构建中断）
+              lintOptions { abortOnError false }
           }
           
           dependencies {
-              implementation 'androidx.appcompat:appcompat:1.0.2'  # 基础UI依赖
+              implementation 'androidx.appcompat:appcompat:1.0.2'
           }
           EOF
 
-          # 8. 生成主应用模块配置（build.gradle）- 版本号动态注入
+          # 8. 生成主应用模块配置（build.gradle）
           cat > "$APP_DIR/build.gradle" << EOF
           buildscript {
               repositories {
@@ -368,29 +357,29 @@ jobs:
                   classpath 'com.android.tools.build:gradle:7.0.4'
               }
           }
-          apply plugin: 'com.android.application'  # 声明为主应用模块
+          apply plugin: 'com.android.application'
           
           android {
-              compileSdk 30  # 编译SDK版本
-              namespace '$APP_PACKAGE'  # 动态注入应用包名（匹配配置）
+              compileSdk 30
+              namespace '$APP_PACKAGE'
               
               defaultConfig {
-                  applicationId "$APP_PACKAGE"  # 应用唯一标识（包名）
-                  minSdk 21  # 最低支持Android 5.0
-                  targetSdk 30  # 目标Android版本
-                  versionCode $APP_VERSION_CODE  # 动态注入版本号（整数）
-                  versionName "$APP_VERSION_NAME"  # 动态注入版本名称（字符串）
+                  applicationId "$APP_PACKAGE"
+                  minSdk 21
+                  targetSdk 30
+                  versionCode $APP_VERSION_CODE
+                  versionName "$APP_VERSION_NAME"
               }
               
               buildTypes {
                   release {
-                      minifyEnabled false  # 关闭代码混淆（简化测试，生产环境可开启）
-                      signingConfig signingConfigs.debug  # 使用调试签名（快速构建）
+                      minifyEnabled false
+                      signingConfig signingConfigs.debug
                       proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
                   }
               }
               
-              lintOptions { abortOnError false }  # 忽略Lint非致命错误
+              lintOptions { abortOnError false }
               
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/google' }
@@ -399,14 +388,14 @@ jobs:
           }
           
           dependencies {
-              implementation project(':CordovaLib')  # 依赖CordovaLib库模块
-              implementation 'androidx.appcompat:appcompat:1.0.2'  # 基础UI依赖
+              implementation project(':CordovaLib')
+              implementation 'androidx.appcompat:appcompat:1.0.2'
           }
           EOF
 
-          # 9. 生成混淆规则（proguard-rules.pro）- 保护WebView相关类
+          # 9. 生成混淆规则（proguard-rules.pro）
           cat > "$APP_DIR/proguard-rules.pro" << EOF
-          # 保留WebView相关类（避免混淆导致功能失效）
+          # 保留WebView相关类
           -keepclassmembers class * extends android.webkit.WebViewClient {
               public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
               public boolean *(android.webkit.WebView, java.lang.String);
