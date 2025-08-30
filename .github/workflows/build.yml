@@ -141,18 +141,18 @@ jobs:
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
           APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"
-          APP_LAYOUT_DIR="$APP_DIR/src/main/res/layout"  # 新增：布局文件目录（加载动画用）
-          APP_DRAWABLE_DIR="$APP_DIR/src/main/res/drawable"  # 新增：图片资源目录（加载动画用）
+          APP_LAYOUT_DIR="$APP_DIR/src/main/res/layout"  # 布局文件目录（加载动画用）
+          APP_DRAWABLE_DIR="$APP_DIR/src/main/res/drawable"  # 图片资源目录（预留）
           
-          # 清理旧项目残留并创建新目录（包含布局和图片目录）
+          # 清理旧项目残留并创建新目录
           rm -rf "$PROJECT_PATH"
           mkdir -p "$APP_JAVA_DIR"
-          mkdir -p "$APP_LAYOUT_DIR"  # 创建布局目录
-          mkdir -p "$APP_DRAWABLE_DIR"  # 创建图片目录
+          mkdir -p "$APP_LAYOUT_DIR"
+          mkdir -p "$APP_DRAWABLE_DIR"
           mkdir -p "$APP_DIR/src/main/res/values"
           mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
 
-          # 1. 新增：生成加载动画布局（activity_main.xml）- 包含WebView和加载进度条
+          # 1. 生成加载动画布局（activity_main.xml）- 修复XML格式错误：ProgressBar标签闭合+移除高版本属性
           cat > "$APP_LAYOUT_DIR/activity_main.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -172,16 +172,15 @@ jobs:
                   android:layout_height="match_parent"
                   android:gravity="center"
                   android:orientation="vertical"
-                  android:background="#FFFFFF">  <!-- 白色背景覆盖WebView白屏 -->
+                  android:background="#FFFFFF">
                   
-                  <!-- 圆形进度条（系统原生动画） -->
+                  <!-- 圆形进度条（仅用基础属性，兼容低版本） -->
                   <ProgressBar
                       android:id="@+id/loading_progress"
                       android:layout_width="50dp"
                       android:layout_height="50dp"
                       android:indeterminate="true"
-                      android:indeterminateTint="#FF0000"  <!-- 进度条颜色（红色） -->
-                      android:indeterminateTintMode="src_in"/>
+                      android:indeterminateDrawable="@android:drawable/progress_indeterminate_horizontal"/>
                   
                   <!-- 加载提示文字 -->
                   <TextView
@@ -195,7 +194,7 @@ jobs:
           </RelativeLayout>
           EOF
 
-          # 2. 生成 WebView 核心逻辑（CordovaActivity.java）- 新增加载动画控制
+          # 2. 生成 WebView 核心逻辑（CordovaActivity.java）- 修复R资源引用问题（指定应用包名）
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/CordovaActivity.java" << EOF
           package org.apache.cordova;
           import android.app.Activity;
@@ -210,6 +209,8 @@ jobs:
           import android.net.http.SslError;
           import android.widget.LinearLayout;
           import android.widget.Toast;
+          // 关键修复：导入当前应用的R资源（包名动态替换）
+          import $APP_PACKAGE.R;
 
           public class CordovaActivity extends Activity {
               private WebView webView;
@@ -219,14 +220,14 @@ jobs:
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  // 加载布局文件（替换原setContentView(webView)）
+                  // 加载布局文件（使用正确的R资源引用）
                   setContentView(R.layout.activity_main);
                   
                   // 初始化控件：WebView和加载动画
                   webView = findViewById(R.id.webview);
                   loadingLayout = findViewById(R.id.loading_layout);
                   
-                  // WebView基础配置（保持原有功能）
+                  // WebView基础配置
                   WebSettings webSettings = webView.getSettings();
                   webSettings.setJavaScriptEnabled(true);
                   webSettings.setDomStorageEnabled(true);
@@ -245,7 +246,7 @@ jobs:
                   
                   webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.101 Mobile Safari/537.36");
 
-                  // 新增：WebViewClient控制加载动画显示/隐藏
+                  // WebViewClient控制加载动画显示/隐藏
                   webView.setWebViewClient(new WebViewClient() {
                       // 网页开始加载时：显示加载动画
                       @Override
@@ -265,35 +266,37 @@ jobs:
                           }
                       }
                       
-                      // 原有功能：链接跳转和SSL处理
+                      // 链接跳转处理
                       @Override
                       public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                           view.loadUrl(request.getUrl().toString());
                           return true;
                       }
                       
+                      // SSL证书错误处理
                       @Override
                       public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
                           handler.proceed();
                       }
                       
+                      // 加载错误处理
                       @Override
                       public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
                           Toast.makeText(CordovaActivity.this, "资源加载失败: " + description, Toast.LENGTH_LONG).show();
-                          // 加载失败时也隐藏动画，避免一直卡在加载状态
+                          // 加载失败时隐藏动画
                           if (loadingLayout != null && loadingLayout.getVisibility() == View.VISIBLE) {
                               loadingLayout.setVisibility(View.GONE);
                           }
                       }
                   });
                   
-                  // 原有功能：JS弹窗支持
+                  // JS弹窗支持
                   webView.setWebChromeClient(new WebChromeClient());
 
                   // 加载目标网址
                   webView.loadUrl("$CUSTOM_URL");
                   
-                  // 原有功能：加载超时关闭页面
+                  // 加载超时处理
                   new android.os.Handler().postDelayed(() -> {
                       if (webView.getProgress() < 100) {
                           Toast.makeText(CordovaActivity.this, "加载超时，即将关闭", Toast.LENGTH_SHORT).show();
@@ -302,7 +305,7 @@ jobs:
                   }, LOAD_TIMEOUT);
               }
               
-              // 原有功能：返回键后退
+              // 返回键后退逻辑
               @Override
               public void onBackPressed() {
                   if (webView.canGoBack()) {
@@ -312,7 +315,7 @@ jobs:
                   }
               }
               
-              // 原有功能：页面暂停/恢复/销毁
+              // 页面生命周期处理
               @Override
               protected void onPause() {
                   super.onPause();
@@ -342,7 +345,7 @@ jobs:
           public class MainActivity extends CordovaActivity {}
           EOF
 
-          # 4. 生成清单文件（AndroidManifest.xml）- 保持原有权限和配置
+          # 4. 生成清单文件（AndroidManifest.xml）- 保持原有配置
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -406,7 +409,7 @@ jobs:
           include ':app', ':CordovaLib'
           EOF
 
-          # 8. 生成 CordovaLib 库模块配置（build.gradle）- 保持原有依赖
+          # 8. 生成 CordovaLib 库模块配置（build.gradle）- 修复依赖：添加对app模块的R资源引用
           cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           buildscript {
               repositories {
@@ -434,6 +437,8 @@ jobs:
           
           dependencies {
               implementation 'androidx.appcompat:appcompat:1.0.2'
+              // 关键修复：CordovaLib依赖app模块，以访问activity_main布局资源
+              implementation project(':app')
           }
           EOF
 
@@ -494,11 +499,13 @@ jobs:
           -keepclassmembers class * extends android.webkit.WebChromeClient {
               public void *(android.webkit.WebView, java.lang.String);
           }
-          # 保留布局资源相关类（避免加载动画布局被混淆）
+          # 保留布局资源相关类
           -keep class **.R$layout { *; }
           -keep class **.R$id { *; }
+          # 保留应用包名相关类（避免R资源混淆）
+          -keep class $APP_PACKAGE.R { *; }
           EOF
-          # 11. 编译 Release 版本 APK
+          # 11. 编译 Release 版本 APK（增加详细日志输出，便于问题定位）
           echo "=== 开始编译 Release 版本 APK ==="
           cd "$ANDROID_ROOT" || exit 1  # 进入项目根目录
           
@@ -506,10 +513,10 @@ jobs:
           gradle wrapper --gradle-version 7.0.2
           chmod +x gradlew  # 赋予执行权限
           
-          # 执行清理与编译（--stacktrace 便于排查错误，新增布局文件需确保编译生效）
+          # 执行清理与编译（增加--info参数输出详细资源编译日志）
           ./gradlew clean :app:assembleRelease --stacktrace --info
           
-          # 检查 APK 是否生成成功，并复制到指定路径（文件名含版本号，便于识别）
+          # 检查 APK 是否生成成功，并复制到指定路径
           APK_SOURCE1="$APP_DIR/build/outputs/apk/release/app-release.apk"
           APK_SOURCE2="$APP_DIR/build/outputs/apk/release/app-release-unsigned.apk"
           APK_DEST="/home/runner/work/webview-app/webview-app/CustomBrowser-v$APP_VERSION_NAME.apk"
@@ -522,63 +529,61 @@ jobs:
             echo "✅ 找到未签名 APK，复制路径：$APK_DEST"
           else
             echo "❌ 未找到 APK 文件，输出构建目录结构用于排查："
-            ls -R "$APP_DIR/build/outputs"  # 打印输出目录结构，协助定位问题
+            ls -R "$APP_DIR/build/outputs"  # 打印输出目录结构
             exit 1  # 构建失败，终止工作流
           fi
 
-      - name: 创建并推送 Git Tag（与版本号关联，标记新功能版本）
+      - name: 创建并推送 Git Tag（与版本号关联）
         run: |
           # 从环境变量获取版本号（来自 config.txt）
           APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
-          TAG_NAME="v$APP_VERSION_NAME"  # Tag 格式：v1.0.0（含加载动画功能）
+          TAG_NAME="v$APP_VERSION_NAME"  # Tag 格式：v1.0.0
           
           # 配置 Git 身份（用于提交 Tag）
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
-          # 若 Tag 已存在，先删除旧 Tag（避免版本冲突）
+          # 若 Tag 已存在，先删除旧 Tag（避免冲突）
           if git rev-parse --verify --quiet "$TAG_NAME"; then
             echo "⚠️ Tag $TAG_NAME 已存在，删除旧 Tag..."
             git tag -d "$TAG_NAME"  # 删除本地 Tag
-            git push origin --delete "$TAG_NAME" 2>/dev/null || true  # 删除远程 Tag（忽略删除失败）
+            git push origin --delete "$TAG_NAME" 2>/dev/null || true  # 删除远程 Tag
           fi
           
-          # 创建新 Tag 并推送（注释注明新增加载动画功能）
-          git tag -a "$TAG_NAME" -m "自定义浏览器应用 $TAG_NAME（新增网页加载动画）"
+          # 创建新 Tag 并推送（注明修复资源编译错误）
+          git tag -a "$TAG_NAME" -m "自定义浏览器应用 $TAG_NAME（修复资源编译错误）"
           if ! git push origin "$TAG_NAME"; then
             echo "⚠️ Tag 推送失败，重试一次..."
             git push origin "$TAG_NAME" || exit 1  # 重试失败则终止
           fi
-          echo "✅ Git Tag 推送成功：$TAG_NAME（已标记加载动画功能）"
+          echo "✅ Git Tag 推送成功：$TAG_NAME"
 
-      - name: 发布 APK 到 GitHub Releases（说明新增功能）
-        uses: softprops/action-gh-release@v2  # 成熟的 Releases 发布工具
+      - name: 发布 APK 到 GitHub Releases
+        uses: softprops/action-gh-release@v2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 自动注入的仓库令牌（无需手动配置）
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: "v${{ env.APP_VERSION_NAME }}"  # 与 Git Tag 保持一致
-          name: "自定义浏览器应用 v${{ env.APP_VERSION_NAME }}（新增加载动画）"  # 标题注明新功能
-          body: |  # Releases 描述（重点说明加载动画功能）
+          tag_name: "v${{ env.APP_VERSION_NAME }}"
+          name: "自定义浏览器应用 v${{ env.APP_VERSION_NAME }}（修复版）"
+          body: |
             ### 应用信息
             - 应用名称：${{ env.APP_NAME }}
             - 应用包名：${{ env.APP_PACKAGE }}
             - 支持系统：Android 5.0+（API 21 及以上）
             - 构建版本：v${{ env.APP_VERSION_NAME }}（版本号：${{ env.APP_VERSION_CODE }}）
             - 构建时间：${{ github.run_at }}
-            - 新增功能：**网页加载动画**（解决白屏问题）
+            - 修复内容：解决资源编译错误（XML格式问题+R资源引用问题）
             
             ### 核心功能
             1. 加载目标网址：${{ env.CUSTOM_URL }}
-            2. 网页加载时显示 **圆形进度条+“加载中...”文字**，加载完成自动隐藏
+            2. 网页加载时显示圆形进度条+“加载中...”文字，解决白屏问题
             3. 支持网页内跳转、缩放、JS 交互
             4. 解决混合内容（HTTP/HTTPS）加载问题
             5. 支持返回键网页后退
-            6. 加载超时（80秒）自动关闭页面
             
             ### 注意事项
             - 此 APK 为调试签名版本，可直接安装测试
             - 生产环境使用需替换为正式签名
-            - 加载动画为白色背景+红色进度条，适配多数网页风格
-          files: /home/runner/work/webview-app/webview-app/CustomBrowser-v${{ env.APP_VERSION_NAME }}.apk  # 待上传的 APK 路径
-          draft: false  # 不设为草稿（直接发布）
-          prerelease: false  # 不设为预发布（标记为正式版本）
+          files: /home/runner/work/webview-app/webview-app/CustomBrowser-v${{ env.APP_VERSION_NAME }}.apk
+          draft: false
+          prerelease: false
