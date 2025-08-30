@@ -1,4 +1,4 @@
-name: 安卓自定义APP自动构建（修复字体问题）
+name: 安卓自定义APP自动构建（彻底修复图标问题）
 on:
   workflow_dispatch:  # 手动触发构建
 permissions:
@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       ########################################################################
-      # 步骤1：拉取代码+安装基础依赖（新增字体安装）
+      # 步骤1：拉取代码+安装基础依赖
       ########################################################################
       - name: 拉取GitHub项目代码
         uses: actions/checkout@v4
@@ -17,18 +17,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: 安装核心依赖工具（含字体）
+      - name: 安装核心依赖工具
         run: |
           sudo apt-get update -y
-          # 安装基础工具+字体包（解决Arial缺失问题）
-          sudo apt-get install -y xmlstarlet imagemagick openjdk-11-jdk tree \
-            fonts-liberation fonts-dejavu fonts-freefont-ttf
+          # 安装基础工具（移除字体依赖）
+          sudo apt-get install -y xmlstarlet imagemagick openjdk-11-jdk tree
           # 配置JDK环境
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
-          
-          # 验证已安装的字体
-          echo -e "\n已安装的字体列表："
-          convert -list font | grep -i "family"
 
       ########################################################################
       # 步骤2：配置Android SDK+Gradle环境
@@ -126,9 +121,9 @@ jobs:
           echo "CUSTOM_URL=$CUSTOM_URL" >> $GITHUB_ENV
 
       ########################################################################
-      # 步骤4：生成应用图标（修复字体问题）
+      # 步骤4：生成应用图标（彻底解决字体问题）
       ########################################################################
-      - name: 生成应用图标（兼容系统字体）
+      - name: 生成应用图标（纯图形方式，不依赖字体）
         run: |
           # 1. 初始化资源目录
           RES_DIR="$GITHUB_WORKSPACE/myapp/android-project/app/src/main/res"
@@ -144,41 +139,45 @@ jobs:
             ["xxxhdpi"]="192x192"
           )
 
-          # 3. 选择系统可用字体（优先Liberation Sans，兼容Arial）
-          FONT_FAMILY="Liberation-Sans"
-          # 验证字体是否存在
-          if ! convert -list font | grep -qi "$FONT_FAMILY"; then
-            echo "⚠️ 未找到Liberation Sans，尝试使用DejaVu Sans"
-            FONT_FAMILY="DejaVu-Sans"
-          fi
-          if ! convert -list font | grep -qi "$FONT_FAMILY"; then
-            echo "⚠️ 未找到DejaVu Sans，尝试使用默认字体"
-            FONT_FAMILY=""  # 使用系统默认字体
-          fi
-          echo "✅ 用于生成图标的字体：$FONT_FAMILY"
-
-          # 4. 生成图标（使用兼容字体）
+          # 3. 生成纯图形图标（不使用任何文字，彻底避免字体问题）
           for DPI in "${!ICON_SPECS[@]}"; do
             SIZE=${ICON_SPECS[$DPI]}
             DEST_PATH="$RES_DIR/mipmap-$DPI/ic_launcher.png"
-            # 根据是否有指定字体调整命令
-            if [ -n "$FONT_FAMILY" ]; then
-              convert -size "$SIZE" xc:#2196F3 -fill white \
-                -font "$FONT_FAMILY" -pointsize 12 -gravity center "label:APP" "$DEST_PATH"
-            else
-              # 不指定字体，使用系统默认
-              convert -size "$SIZE" xc:#2196F3 -fill white \
-                -pointsize 12 -gravity center "label:APP" "$DEST_PATH"
-            fi
+            
+            # 计算图标元素尺寸（按比例计算，适应不同分辨率）
+            let "outer_radius = ${SIZE%x*} / 2"
+            let "inner_radius = outer_radius * 3 / 5"
+            let "dot_radius = outer_radius / 5"
+            
+            # 生成蓝色圆形背景 + 白色圆形 + 蓝色小圆点的图标
+            convert -size "$SIZE" xc:transparent \
+              -fill "#2196F3" -draw "circle $outer_radius,$outer_radius $outer_radius,0" \
+              -fill "white" -draw "circle $outer_radius,$outer_radius $inner_radius,0" \
+              -fill "#2196F3" -draw "circle $outer_radius,$outer_radius $dot_radius,0" \
+              "$DEST_PATH"
+            
             # 校验生成结果
-            if [ ! -f "$DEST_PATH" ]; then
+            if [ ! -f "$DEST_PATH" ] || [ ! -s "$DEST_PATH" ]; then
               echo "❌ 图标生成失败：$DEST_PATH"
-              exit 1
+              # 尝试备选方案：纯蓝色圆形
+              convert -size "$SIZE" xc:transparent \
+                -fill "#2196F3" -draw "circle $outer_radius,$outer_radius $outer_radius,0" \
+                "$DEST_PATH"
+              # 再次检查
+              if [ ! -f "$DEST_PATH" ] || [ ! -s "$DEST_PATH" ]; then
+                echo "❌ 备选方案也失败，使用紧急备用图标"
+                # 最简化方案：纯色方块
+                convert -size "$SIZE" xc:"#2196F3" "$DEST_PATH"
+                if [ ! -f "$DEST_PATH" ] || [ ! -s "$DEST_PATH" ]; then
+                  echo "❌ 所有图标生成方案均失败"
+                  exit 1
+                fi
+              fi
             fi
             echo "✅ 生成图标：$DEST_PATH"
           done
 
-          # 5. 生成基础资源文件
+          # 4. 生成基础资源文件
           cat > "$RES_DIR/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
