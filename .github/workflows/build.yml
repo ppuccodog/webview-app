@@ -72,7 +72,7 @@ jobs:
             "extras;google;m2repository" \
             --verbose --no_https || exit 1
 
-          # 配置Gradle 7.0.2
+          # 配置Gradle 7.0.2（兼容Android 30）
           GRADLE_VERSION="7.0.2"
           GRADLE_PATH="$HOME/gradle-$GRADLE_VERSION"
           GRADLE_URL="https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip"
@@ -191,15 +191,14 @@ jobs:
           # 定义项目路径
           echo "PROJECT_ROOT=$GITHUB_WORKSPACE/myapp/android-project" >> $GITHUB_ENV
           echo "APP_RES_DIR=$GITHUB_WORKSPACE/myapp/android-project/app/src/main/res" >> $GITHUB_ENV
-
       ########################################################################
       # 步骤4：创建项目目录结构
       ########################################################################
       - name: 创建项目目录结构
         run: |
           echo "✅ 开始创建项目目录：${{ env.PROJECT_ROOT }}"
-          # 创建核心目录
-          mkdir -p "${{ env.PROJECT_ROOT }}/app/src/main"
+          # 创建核心目录（包含app模块和CordovaLib模块）
+          mkdir -p "${{ env.PROJECT_ROOT }}/app/src/main/java"
           mkdir -p "${{ env.PROJECT_ROOT }}/CordovaLib/src/main/java/org/apache/cordova"
           
           # 创建资源目录（含所有分辨率的图标目录）
@@ -218,14 +217,14 @@ jobs:
           # 验证目录创建结果
           echo -e "\n📁 项目目录结构（前5层）："
           tree -L 5 "${{ env.PROJECT_ROOT }}"
-          # 强制检查图标目录是否存在
-          if [ ! -d "${{ env.APP_RES_DIR }}/mipmap-mdpi" ]; then
-            echo "❌ 图标目录创建失败，终止构建"
+          # 强制检查关键目录是否存在（避免后续步骤失败）
+          if [ ! -d "${{ env.APP_RES_DIR }}/mipmap-mdpi" ] || [ ! -d "$JAVA_DIR" ]; then
+            echo "❌ 关键目录创建失败，终止构建"
             exit 1
           fi
 
       ########################################################################
-      # 步骤5：生成应用图标和资源文件（彻底修复关联数组注释错误）
+      # 步骤5：生成应用图标和资源文件
       ########################################################################
       - name: 生成应用图标和资源文件
         run: |
@@ -233,7 +232,6 @@ jobs:
           
           # 1. 生成应用图标（覆盖所有分辨率，三重容错）
           # 分辨率说明：mdpi(48x48)、hdpi(72x72)、xhdpi(96x96)、xxhdpi(144x144)、xxxhdpi(192x192)
-          # 修复：数组内仅保留键值对，注释统一放在数组外
           declare -A ICON_SPECS=(
             ["mdpi"]="48x48"
             ["hdpi"]="72x72"
@@ -315,9 +313,141 @@ jobs:
           find "${{ env.APP_RES_DIR }}" -type f
 
       ########################################################################
-      # 步骤6：生成项目核心代码和配置
+      # 步骤6：生成Gradle配置文件（修复Task 'clean' not found错误）
       ########################################################################
-      - name: 生成项目核心代码和配置
+      - name: 生成Gradle配置文件
+        run: |
+          echo "✅ 开始生成Gradle核心配置文件"
+          PROJECT_ROOT="${{ env.PROJECT_ROOT }}"
+
+          # 1. 生成根目录settings.gradle（定义项目模块）
+          SETTINGS_FILE="$PROJECT_ROOT/settings.gradle"
+          cat > "$SETTINGS_FILE" << EOF
+          rootProject.name = 'android-project'
+          include ':app'
+          include ':CordovaLib'
+          EOF
+          [ -f "$SETTINGS_FILE" ] && echo "✅ 生成settings.gradle" || { echo "❌ settings.gradle生成失败"; exit 1; }
+
+          # 2. 生成根目录build.gradle（配置项目级依赖）
+          ROOT_BUILD_FILE="$PROJECT_ROOT/build.gradle"
+          cat > "$ROOT_BUILD_FILE" << EOF
+          buildscript {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:4.2.2'  // 兼容Gradle 7.0.2
+              }
+          }
+
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          task clean(type: Delete) {
+              delete rootProject.buildDir
+          }
+          EOF
+          [ -f "$ROOT_BUILD_FILE" ] && echo "✅ 生成根目录build.gradle" || { echo "❌ 根目录build.gradle生成失败"; exit 1; }
+
+          # 3. 生成app模块build.gradle（配置应用级依赖和构建参数）
+          APP_BUILD_FILE="$PROJECT_ROOT/app/build.gradle"
+          cat > "$APP_BUILD_FILE" << EOF
+          apply plugin: 'com.android.application'
+
+          android {
+              compileSdkVersion 30
+              buildToolsVersion '30.0.2'
+
+              defaultConfig {
+                  applicationId '${{ env.APP_PACKAGE }}'
+                  minSdkVersion 21
+                  targetSdkVersion 30
+                  versionCode 1
+                  versionName '${{ env.APP_VERSION }}'
+                  multiDexEnabled true
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                      // 生成未签名APK（简化流程，如需签名可添加signingConfig）
+                      signingConfig null
+                  }
+              }
+
+              // 解决资源重复问题
+              packagingOptions {
+                  exclude 'META-INF/LICENSE'
+                  exclude 'META-INF/LICENSE.txt'
+                  exclude 'META-INF/NOTICE'
+                  exclude 'META-INF/NOTICE.txt'
+              }
+          }
+
+          dependencies {
+              implementation project(':CordovaLib')
+              implementation 'androidx.appcompat:appcompat:1.3.1'
+              implementation 'androidx.multidex:multidex:2.0.1'
+          }
+          EOF
+          [ -f "$APP_BUILD_FILE" ] && echo "✅ 生成app模块build.gradle" || { echo "❌ app模块build.gradle生成失败"; exit 1; }
+
+          # 4. 生成CordovaLib模块build.gradle（配置依赖库）
+          CORDOVALIB_BUILD_FILE="$PROJECT_ROOT/CordovaLib/build.gradle"
+          cat > "$CORDOVALIB_BUILD_FILE" << EOF
+          apply plugin: 'com.android.library'
+
+          android {
+              compileSdkVersion 30
+              buildToolsVersion '30.0.2'
+
+              defaultConfig {
+                  minSdkVersion 21
+                  targetSdkVersion 30
+                  versionCode 1
+                  versionName '1.0'
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                  }
+              }
+          }
+
+          dependencies {
+              implementation 'androidx.appcompat:appcompat:1.3.1'
+          }
+          EOF
+          [ -f "$CORDOVALIB_BUILD_FILE" ] && echo "✅ 生成CordovaLib模块build.gradle" || { echo "❌ CordovaLib模块build.gradle生成失败"; exit 1; }
+
+          # 5. 生成proguard-rules.pro（避免混淆核心类）
+          PROGUARD_FILE="$PROJECT_ROOT/app/proguard-rules.pro"
+          cat > "$PROGUARD_FILE" << EOF
+          # 保留WebView相关类不被混淆
+          -keep public class android.webkit.** { *; }
+          # 保留Cordova相关类不被混淆
+          -keep public class org.apache.cordova.** { *; }
+          # 保留应用包名下的类不被混淆
+          -keep public class ${{ env.APP_PACKAGE }}.** { *; }
+          EOF
+          [ -f "$PROGUARD_FILE" ] && echo "✅ 生成proguard-rules.pro" || { echo "❌ proguard-rules.pro生成失败"; exit 1; }
+
+          # 验证所有Gradle配置文件
+          echo -e "\n📄 生成的Gradle配置文件列表："
+          find "$PROJECT_ROOT" -name "*.gradle" -o -name "settings.gradle" -o -name "proguard-rules.pro"
+      ########################################################################
+      # 步骤7：生成项目核心代码
+      ########################################################################
+      - name: 生成项目核心代码
         run: |
           # 生成CordovaActivity（核心页面逻辑）
           CORDOVA_ACTIVITY="${{ env.PROJECT_ROOT }}/CordovaLib/src/main/java/org/apache/cordova/CordovaActivity.java"
@@ -343,19 +473,24 @@ jobs:
                   webView = new WebView(this);
                   WebSettings webSettings = webView.getSettings();
 
+                  // 启用JavaScript和DOM存储
                   webSettings.setJavaScriptEnabled(true);
                   webSettings.setDomStorageEnabled(true);
                   webSettings.setAllowFileAccess(true);
+                  
+                  // 配置缩放和显示
                   webSettings.setSupportZoom(true);
                   webSettings.setBuiltInZoomControls(true);
                   webSettings.setDisplayZoomControls(false);
                   webSettings.setLoadWithOverviewMode(true);
                   webSettings.setUseWideViewPort(true);
 
+                  // 允许混合内容（HTTP+HTTPS）
                   if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                       webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                   }
 
+                  // 配置WebViewClient处理页面跳转和SSL
                   webView.setWebViewClient(new WebViewClient() {
                       @Override
                       public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -365,17 +500,18 @@ jobs:
 
                       @Override
                       public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-                          handler.proceed(); // 忽略SSL错误
+                          handler.proceed(); // 忽略SSL错误（生产环境慎用）
                       }
                   });
 
+                  // 配置WebChromeClient处理JavaScript对话框
                   webView.setWebChromeClient(new WebChromeClient());
                   setContentView(webView);
 
                   // 加载目标URL
                   webView.loadUrl("${{ env.CUSTOM_URL }}");
                   
-                  // 设置超时
+                  // 设置超时关闭页面
                   new android.os.Handler().postDelayed(() -> {
                       if (webView.getProgress() < 100) {
                           finish();
@@ -383,6 +519,7 @@ jobs:
                   }, LOAD_TIMEOUT);
               }
 
+              // 支持返回键导航
               @Override
               public void onBackPressed() {
                   if (webView.canGoBack()) {
@@ -402,6 +539,7 @@ jobs:
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="${{ env.APP_PACKAGE }}">
               
+              <!-- 必要权限声明 -->
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
               <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
@@ -432,24 +570,35 @@ jobs:
           [ -f "$MANIFEST_FILE" ] && echo "✅ 生成AndroidManifest.xml" || exit 1
 
       ########################################################################
-      # 步骤7：构建APK
+      # 步骤8：构建APK（修复Task 'clean' not found错误）
       ########################################################################
       - name: 构建安卓应用
         run: |
           cd ${{ env.PROJECT_ROOT }}
-          gradle clean assembleRelease --stacktrace
+          # 验证Gradle任务是否可用
+          echo "📋 可用的Gradle任务列表："
+          gradle tasks --all || { echo "❌ Gradle任务列表获取失败"; exit 1; }
           
-          # 验证APK生成
-          APK_PATH=$(find . -name "*.apk" | grep -v "unaligned" | grep -v "unsigned" | head -n 1)
+          # 执行构建（先清理再构建Release版本）
+          echo "🚀 开始构建APK..."
+          gradle clean :app:assembleRelease --stacktrace
+          
+          # 查找生成的APK文件
+          APK_PATH=$(find . -name "*.apk" | grep -E "app-release\.apk$" | head -n 1)
           if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
-            echo "❌ APK构建失败"
+            echo "❌ APK构建失败，未找到输出文件"
+            # 输出构建目录结构辅助调试
+            echo "📂 构建目录文件列表："
+            find . -name "*.apk"
             exit 1
           fi
           echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
           echo "✅ APK构建成功：$APK_PATH"
+          # 输出APK信息
+          ls -lh "$APK_PATH"
 
       ########################################################################
-      # 步骤8：上传构建产物到Release
+      # 步骤9：上传构建产物到Release
       ########################################################################
       - name: 上传构建产物到Release
         uses: softprops/action-gh-release@v1
@@ -457,5 +606,7 @@ jobs:
           files: ${{ env.APK_PATH }}
           name: ${{ env.APP_NAME_SAFE }}_v${{ env.APP_VERSION }}
           tag_name: v${{ env.APP_VERSION }}
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
