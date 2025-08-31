@@ -55,10 +55,14 @@ jobs:
           yes | "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" --licenses || true
           "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https || exit 1
 
-      - name: 安装完整Gradle（含wrapper依赖）
+      - name: 安装完整Gradle（含wrapper依赖，修复JAR获取问题）
         run: |
           GRADLE_VERSION="7.0.2"
           GRADLE_PATH="$HOME/gradle-$GRADLE_VERSION"
+          GRADLE_WRAPPER_LIB_DIR="$HOME/gradle-wrapper-libs"
+          mkdir -p "$GRADLE_WRAPPER_LIB_DIR"
+          
+          # 先尝试从Gradle安装包提取
           if [ ! -d "$GRADLE_PATH" ]; then
             GRADLE_URL="https://mirrors.aliyun.com/gradle/gradle-$GRADLE_VERSION-all.zip"
             if ! wget --timeout=300 --tries=3 "$GRADLE_URL" -O gradle.zip; then
@@ -67,11 +71,24 @@ jobs:
             fi
             unzip -q gradle.zip -d "$HOME"
           fi
-          # 提取gradle-wrapper.jar（解决类缺失问题）
-          mkdir -p "$HOME/gradle-wrapper-libs"
-          cp "$GRADLE_PATH/lib/gradle-wrapper-*.jar" "$HOME/gradle-wrapper-libs/gradle-wrapper.jar" || exit 1
+          
+          # 提取指定的gradle-wrapper.jar（避免通配符问题）
+          GRADLE_WRAPPER_JAR="$GRADLE_WRAPPER_LIB_DIR/gradle-wrapper.jar"
+          if [ -f "$GRADLE_PATH/lib/gradle-wrapper-$GRADLE_VERSION.jar" ]; then
+            cp "$GRADLE_PATH/lib/gradle-wrapper-$GRADLE_VERSION.jar" "$GRADLE_WRAPPER_JAR"
+          else
+            # 如果按版本号找不到，退而求其次找目录下的gradle-wrapper.jar
+            WRAPPER_JAR_IN_LIB=$(find "$GRADLE_PATH/lib" -name "gradle-wrapper*.jar" -type f | head -n 1)
+            if [ -n "$WRAPPER_JAR_IN_LIB" ]; then
+              cp "$WRAPPER_JAR_IN_LIB" "$GRADLE_WRAPPER_JAR"
+            else
+              # 从Maven仓库直接下载
+              wget --timeout=300 "https://repo1.maven.org/maven2/org/gradle/wrapper/gradle-wrapper/1.0/gradle-wrapper-1.0.jar" -O "$GRADLE_WRAPPER_JAR" || exit 1
+            fi
+          fi
+          
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
-          echo "GRADLE_WRAPPER_JAR_PATH=$HOME/gradle-wrapper-libs/gradle-wrapper.jar" >> $GITHUB_ENV
+          echo "GRADLE_WRAPPER_JAR_PATH=$GRADLE_WRAPPER_JAR" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
       - name: 读取 config.txt 配置（独立步骤，简化脚本）
         run: |
@@ -182,6 +199,7 @@ jobs:
           EOF
               fi
           done
+
       - name: 生成应用资源文件（布局/动画/字符串，独立步骤）
         run: |
           # 读取环境变量
@@ -271,7 +289,6 @@ jobs:
           EOF
 
           echo "✅ 应用资源文件生成完成"
-
       - name: 生成核心Java代码（WebView逻辑+主Activity，独立步骤）
         run: |
           # 读取环境变量
@@ -591,7 +608,6 @@ jobs:
 
           # 赋予gradlew可执行权限
           chmod +x "$ANDROID_ROOT/gradlew"
-          echo "✅ gradlew
           echo "✅ gradlew脚本生成并配置权限完成"
 
           # 4. 生成AndroidManifest.xml（权限+组件配置）
@@ -677,6 +693,7 @@ jobs:
           EOF
 
           echo "✅ Gradle基础配置文件生成完成"
+
       - name: 生成模块级build.gradle（独立步骤，避免脚本过长）
         run: |
           # 读取环境变量
@@ -769,7 +786,6 @@ jobs:
           EOF
 
           echo "✅ 模块级build.gradle生成完成"
-
       - name: 执行编译（独立步骤，简化调试）
         run: |
           # 配置环境变量
