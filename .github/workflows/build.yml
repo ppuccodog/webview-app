@@ -17,7 +17,7 @@ jobs:
       - name: 安装基础依赖（JDK+镜像源配置）
         run: |
           # 替换阿里云镜像源加速
-          sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
+          sudo cp /etc          etc/apt/sources.list /etc/apt/sources.list.bak
           sudo tee /etc/apt/sources.list > /dev/null << EOF
           deb http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse
           deb http://mirrors.aliyun.com/ubuntu/ noble-updates main restricted universe multiverse
@@ -55,36 +55,34 @@ jobs:
           yes | "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" --licenses || true
           "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https || exit 1
 
-      - name: 安装完整Gradle（含wrapper依赖，修复JAR获取问题）
+      - name: 安装完整Gradle（修复Wrapper类缺失问题）
         run: |
           GRADLE_VERSION="7.0.2"
           GRADLE_PATH="$HOME/gradle-$GRADLE_VERSION"
           GRADLE_WRAPPER_LIB_DIR="$HOME/gradle-wrapper-libs"
           mkdir -p "$GRADLE_WRAPPER_LIB_DIR"
           
-          # 先尝试从Gradle安装包提取
-          if [ ! -d "$GRADLE_PATH" ]; then
-            GRADLE_URL="https://mirrors.aliyun.com/gradle/gradle-$GRADLE_VERSION-all.zip"
-            if ! wget --timeout=300 --tries=3 "$GRADLE_URL" -O gradle.zip; then
-              GRADLE_URL="https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-all.zip"
-              wget --timeout=300 --tries=2 "$GRADLE_URL" -O gradle.zip || exit 1
-            fi
-            unzip -q gradle.zip -d "$HOME"
-          fi
-          
-          # 提取指定的gradle-wrapper.jar（避免通配符问题）
+          # 确保获取正确版本的wrapper
           GRADLE_WRAPPER_JAR="$GRADLE_WRAPPER_LIB_DIR/gradle-wrapper.jar"
-          if [ -f "$GRADLE_PATH/lib/gradle-wrapper-$GRADLE_VERSION.jar" ]; then
-            cp "$GRADLE_PATH/lib/gradle-wrapper-$GRADLE_VERSION.jar" "$GRADLE_WRAPPER_JAR"
-          else
-            # 如果按版本号找不到，退而求其次找目录下的gradle-wrapper.jar
-            WRAPPER_JAR_IN_LIB=$(find "$GRADLE_PATH/lib" -name "gradle-wrapper*.jar" -type f | head -n 1)
-            if [ -n "$WRAPPER_JAR_IN_LIB" ]; then
-              cp "$WRAPPER_JAR_IN_LIB" "$GRADLE_WRAPPER_JAR"
-            else
-              # 从Maven仓库直接下载
-              wget --timeout=300 "https://repo1.maven.org/maven2/org/gradle/wrapper/gradle-wrapper/1.0/gradle-wrapper-1.0.jar" -O "$GRADLE_WRAPPER_JAR" || exit 1
-            fi
+          
+          # 直接从Gradle发行包提取对应版本的wrapper
+          GRADLE_URL="https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-all.zip"
+          if ! wget --timeout=300 --tries=3 "$GRADLE_URL" -O gradle.zip; then
+            GRADLE_URL="https://mirrors.aliyun.com/gradle/gradle-$GRADLE_VERSION-all.zip"
+            wget --timeout=300 --tries=2 "$GRADLE_URL" -O gradle.zip || exit 1
+          fi
+          unzip -q gradle.zip -d "$HOME"
+          
+          # 强制使用与Gradle版本匹配的wrapper
+          cp "$GRADLE_PATH/lib/gradle-wrapper-$GRADLE_VERSION.jar" "$GRADLE_WRAPPER_JAR" || {
+            echo "❌ 提取特定版本wrapper失败，尝试通用版本"
+            cp "$GRADLE_PATH/lib/gradle-wrapper.jar" "$GRADLE_WRAPPER_JAR" || exit 1
+          }
+          
+          # 验证文件完整性
+          if ! jar tf "$GRADLE_WRAPPER_JAR" | grep -q "org/gradle/wrapper/GradleWrapperMain.class"; then
+            echo "❌ wrapper文件不完整，从Maven中央仓库获取"
+            wget "https://repo1.maven.org/maven2/org/gradle/wrapper/gradle-wrapper/7.0.2/gradle-wrapper-7.0.2.jar" -O "$GRADLE_WRAPPER_JAR" || exit 1
           fi
           
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
@@ -143,7 +141,7 @@ jobs:
           echo "版本名称：$APP_VERSION_NAME"
           echo "版本号（整数）：$APP_VERSION_CODE"
 
-      - name: 初始化项目目录+处理图标（独立步骤，减少单脚本长度）
+      - name: 初始化项目目录+处理图标
         run: |
           # 读取环境变量
           ANDROID_ROOT="${{ env.ANDROID_ROOT }}"
@@ -175,7 +173,7 @@ jobs:
             exit 1
           fi
 
-          # 多分辨率图标处理（独立逻辑，避免与其他步骤混淆）
+          # 多分辨率图标处理
           declare -A icon_mappings=(
               ["icon/48.png"]="mipmap-mdpi/ic_launcher.png"
               ["icon/72.png"]="mipmap-hdpi/ic_launcher.png"
@@ -190,7 +188,7 @@ jobs:
                   echo "✅ 已复制图标: $src -> $dest"
               else
                   echo "⚠️ 未找到图标文件: $src，生成默认蓝色圆形图标"
-                  # 生成默认图标（XML格式，避免依赖图片文件）
+                  # 生成默认图标（XML格式）
                   cat > "$dest" << 'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
@@ -200,7 +198,7 @@ jobs:
               fi
           done
 
-      - name: 生成应用资源文件（布局/动画/字符串，独立步骤）
+      - name: 生成应用资源文件（布局/动画/字符串）
         run: |
           # 读取环境变量
           ANDROID_ROOT="${{ env.ANDROID_ROOT }}"
@@ -279,7 +277,7 @@ jobs:
           </animated-rotate>
           EOF
 
-          # 4. 生成字符串资源（应用名称+主题）
+          # 4. 生成字符串资源
           cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
@@ -289,7 +287,7 @@ jobs:
           EOF
 
           echo "✅ 应用资源文件生成完成"
-      - name: 生成核心Java代码（WebView逻辑+主Activity，独立步骤）
+      - name: 生成核心Java代码（WebView逻辑+主Activity）
         run: |
           # 读取环境变量
           ANDROID_ROOT="${{ env.ANDROID_ROOT }}"
@@ -330,13 +328,13 @@ jobs:
 
               private void initWebViewSettings() {
                   WebSettings webSettings = webView.getSettings();
-                  // 启用JS和DOM存储（适配网页交互）
+                  // 启用JS和DOM存储
                   webSettings.setJavaScriptEnabled(true);
                   webSettings.setDomStorageEnabled(true);
                   // 允许文件访问
                   webSettings.setAllowFileAccess(true);
                   webSettings.setAllowContentAccess(true);
-                  // 适配HTTPS/HTTP混合内容（Android 5.0+）
+                  // 适配HTTPS/HTTP混合内容
                   if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                       webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                   }
@@ -347,7 +345,7 @@ jobs:
                   // 适配屏幕
                   webSettings.setLoadWithOverviewMode(true);
                   webSettings.setUseWideViewPort(true);
-                  // 自定义UA（模拟手机浏览器）
+                  // 自定义UA
                   webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.101 Mobile Safari/537.36");
               }
 
@@ -356,7 +354,6 @@ jobs:
                       @Override
                       public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                           super.onPageStarted(view, url, favicon);
-                          // 显示加载动画
                           if (loadingLayout != null && loadingLayout.getVisibility() == View.GONE) {
                               loadingLayout.setVisibility(View.VISIBLE);
                           }
@@ -365,7 +362,6 @@ jobs:
                       @Override
                       public void onPageFinished(WebView view, String url) {
                           super.onPageFinished(view, url);
-                          // 隐藏加载动画
                           if (loadingLayout != null && loadingLayout.getVisibility() == View.VISIBLE) {
                               loadingLayout.setVisibility(View.GONE);
                           }
@@ -373,33 +369,28 @@ jobs:
                       
                       @Override
                       public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                          // 内部打开链接
                           view.loadUrl(request.getUrl().toString());
                           return true;
                       }
                       
                       @Override
                       public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-                          // 忽略SSL错误（测试用，生产环境需删除）
                           handler.proceed();
                       }
                       
                       @Override
                       public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                          // 加载错误提示
                           Toast.makeText(context, "资源加载失败: " + description, Toast.LENGTH_LONG).show();
                           if (loadingLayout != null && loadingLayout.getVisibility() == View.VISIBLE) {
                               loadingLayout.setVisibility(View.GONE);
                           }
                       }
                   });
-                  // 启用Chrome内核（支持更多网页特性）
                   webView.setWebChromeClient(new WebChromeClient());
               }
 
               public void loadUrl(String url) {
                   webView.loadUrl(url);
-                  // 超时关闭逻辑
                   new Handler().postDelayed(() -> {
                       if (webView.getProgress() < 100) {
                           Toast.makeText(context, "加载超时，即将关闭", Toast.LENGTH_SHORT).show();
@@ -432,11 +423,9 @@ jobs:
                   super.onCreate(savedInstanceState);
                   setContentView(R.layout.activity_main);
                   
-                  // 初始化WebView和加载布局
                   WebView webView = findViewById(R.id.webview);
                   LinearLayout loadingLayout = findViewById(R.id.loading_layout);
                   
-                  // 初始化WebView工具类并加载目标网址
                   webViewHelper = new WebViewHelper(this, webView, loadingLayout);
                   webViewHelper.setWebViewClient();
                   webViewHelper.loadUrl("$CUSTOM_URL");
@@ -444,7 +433,6 @@ jobs:
               
               @Override
               public void onBackPressed() {
-                  // 支持返回上一页（而非直接退出）
                   if (webViewHelper != null && webViewHelper.getWebView().canGoBack()) {
                       webViewHelper.getWebView().goBack();
                   } else {
@@ -470,7 +458,6 @@ jobs:
               
               @Override
               protected void onDestroy() {
-                  // 销毁WebView，避免内存泄漏
                   if (webViewHelper != null) {
                       webViewHelper.getWebView().destroy();
                   }
@@ -481,7 +468,7 @@ jobs:
 
           echo "✅ 核心Java代码生成完成"
 
-      - name: 生成Gradle配置文件（解决类缺失，独立步骤）
+      - name: 生成Gradle配置文件（强化Wrapper验证）
         run: |
           # 读取环境变量
           ANDROID_ROOT="${{ env.ANDROID_ROOT }}"
@@ -494,18 +481,22 @@ jobs:
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
 
-          # 1. 复制gradle-wrapper.jar（核心修复：解决类缺失）
+          # 1. 复制并验证gradle-wrapper.jar（核心修复）
           if [ ! -f "$GRADLE_WRAPPER_JAR" ]; then
-            echo "❌ 未找到gradle-wrapper.jar，重新下载..."
-            wget --timeout=300 "https://repo1.maven.org/maven2/org/gradle/wrapper/gradle-wrapper/1.0/gradle-wrapper-1.0.jar" -O "$GRADLE_WRAPPER_JAR" || exit 1
+            echo "❌ 未找到gradle-wrapper.jar，紧急下载..."
+            wget --timeout=300 "https://repo1.maven.org/maven2/org/gradle/wrapper/gradle-wrapper/7.0.2/gradle-wrapper-7.0.2.jar" -O "$GRADLE_WRAPPER_JAR" || exit 1
           fi
           cp "$GRADLE_WRAPPER_JAR" "$GRADLE_WRAPPER_DIR/gradle-wrapper.jar" || exit 1
-          if [ ! -f "$GRADLE_WRAPPER_DIR/gradle-wrapper.jar" ]; then
-            echo "❌ gradle-wrapper.jar复制失败，终止构建"
-            exit 1
+          
+          # 强制验证关键类是否存在
+          if ! jar tf "$GRADLE_WRAPPER_DIR/gradle-wrapper.jar" | grep -q "org/gradle/wrapper/GradleWrapperMain.class"; then
+            echo "❌ 关键类缺失，重新获取wrapper"
+            wget "https://services.gradle.org/distributions/gradle-7.0.2-bin.zip" -O gradle-temp.zip
+            unzip -q gradle-temp.zip
+            cp gradle-7.0.2/lib/gradle-wrapper-7.0.2.jar "$GRADLE_WRAPPER_DIR/gradle-wrapper.jar" || exit 1
           fi
 
-          # 2. 生成gradle-wrapper.properties（指定Gradle版本）
+          # 2. 生成gradle-wrapper.properties
           cat > "$GRADLE_WRAPPER_DIR/gradle-wrapper.properties" << 'EOF'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -514,7 +505,7 @@ jobs:
           zipStorePath=wrapper/dists
           EOF
 
-          # 3. 生成gradlew脚本（可执行）
+          # 3. 生成gradlew脚本并设置权限
           cat > "$ANDROID_ROOT/gradlew" << 'EOF'
           #!/usr/bin/env sh
           ##############################################################################
@@ -606,16 +597,16 @@ jobs:
           exec "$JAVACMD" "$@"
           EOF
 
-          # 赋予gradlew可执行权限
+          # 确保gradlew有执行权限
           chmod +x "$ANDROID_ROOT/gradlew"
           echo "✅ gradlew脚本生成并配置权限完成"
 
-          # 4. 生成AndroidManifest.xml（权限+组件配置）
+          # 4. 生成AndroidManifest.xml
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="$APP_PACKAGE">
-              <!-- 网络核心权限（WebView加载网页必需） -->
+              <!-- 网络核心权限 -->
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -628,9 +619,9 @@ jobs:
                   android:roundIcon="@mipmap/ic_launcher"
                   android:supportsRtl="true"
                   android:theme="@style/AppTheme"
-                  android:hardwareAccelerated="true"> <!-- 启用硬件加速，提升WebView性能 -->
+                  android:hardwareAccelerated="true">
 
-                  <!-- 主Activity（Android 12+需显式设置exported=true） -->
+                  <!-- 主Activity -->
                   <activity
                       android:name="$APP_PACKAGE.MainActivity"
                       android:exported="true"
@@ -642,13 +633,13 @@ jobs:
                       </intent-filter>
                   </activity>
 
-                  <!-- Cordova WebView依赖Activity（无需对外暴露，exported=false） -->
+                  <!-- Cordova WebView依赖Activity -->
                   <activity
                       android:name="org.apache.cordova.engine.SystemWebViewActivity"
                       android:configChanges="orientation|keyboardHidden|screenSize"
                       android:exported="false" />
 
-                  <!-- 文件共享配置（适配Android 7.0+文件访问权限） -->
+                  <!-- 文件共享配置 -->
                   <provider
                       android:name="androidx.core.content.FileProvider"
                       android:authorities="$APP_PACKAGE.fileprovider"
@@ -694,7 +685,7 @@ jobs:
 
           echo "✅ Gradle基础配置文件生成完成"
 
-      - name: 生成模块级build.gradle（独立步骤，避免脚本过长）
+      - name: 生成模块级build.gradle
         run: |
           # 读取环境变量
           ANDROID_ROOT="${{ env.ANDROID_ROOT }}"
@@ -714,29 +705,28 @@ jobs:
 
               defaultConfig {
                   applicationId "$APP_PACKAGE"
-                  minSdkVersion 21 // 支持Android 5.0+
+                  minSdkVersion 21
                   targetSdkVersion 30
                   versionCode $APP_VERSION_CODE
                   versionName "$APP_VERSION_NAME"
-                  multiDexEnabled true // 解决方法数超过65535问题
+                  multiDexEnabled true
               }
 
               buildTypes {
                   release {
-                      minifyEnabled true // 混淆代码（减小APK体积）
-                      shrinkResources true // 移除无用资源
+                      minifyEnabled true
+                      shrinkResources true
                       proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-                      signingConfig signingConfigs.debug // 测试用debug签名，生产需替换为正式签名
+                      signingConfig signingConfigs.debug
                   }
               }
 
               lintOptions {
-                  abortOnError false // 忽略lint警告（避免编译中断）
+                  abortOnError false
                   checkReleaseBuilds false
               }
 
               packagingOptions {
-                  // 排除重复的许可文件（避免编译冲突）
                   exclude 'META-INF/LICENSE'
                   exclude 'META-INF/LICENSE.txt'
                   exclude 'META-INF/NOTICE'
@@ -745,10 +735,10 @@ jobs:
           }
 
           dependencies {
-              implementation project(':CordovaLib') // 依赖Cordova库
-              implementation 'androidx.appcompat:appcompat:1.3.1' // 兼容库
-              implementation 'androidx.multidex:multidex:2.0.1' // 多 dex 支持
-              implementation 'androidx.core:core:1.6.0' // 核心组件支持
+              implementation project(':CordovaLib')
+              implementation 'androidx.appcompat:appcompat:1.3.1'
+              implementation 'androidx.multidex:multidex:2.0.1'
+              implementation 'androidx.core:core:1.6.0'
           }
           EOF
 
@@ -769,7 +759,7 @@ jobs:
 
               buildTypes {
                   release {
-                      minifyEnabled false // 库模块不混淆（避免依赖冲突）
+                      minifyEnabled false
                       proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
                   }
               }
@@ -786,7 +776,7 @@ jobs:
           EOF
 
           echo "✅ 模块级build.gradle生成完成"
-      - name: 执行编译（独立步骤，简化调试）
+      - name: 执行编译（增加Wrapper预验证）
         run: |
           # 配置环境变量
           export JAVA_HOME="${{ env.JDK11_PATH }}"
@@ -802,7 +792,23 @@ jobs:
           # 切换到项目根目录
           cd "$ANDROID_ROOT" || { echo "❌ 切换目录失败: $ANDROID_ROOT"; exit 1; }
 
-          # 验证关键文件（避免编译到一半报错）
+          # 强化验证：检查Gradle Wrapper关键类
+          echo "🔍 验证Gradle Wrapper完整性..."
+          if ! jar tf "gradle/wrapper/gradle-wrapper.jar" | grep -q "org/gradle/wrapper/GradleWrapperMain.class"; then
+            echo "❌ Gradle Wrapper关键类缺失，尝试修复..."
+            # 现场修复逻辑
+            wget "https://services.gradle.org/distributions/gradle-7.0.2-bin.zip" -O gradle-fix.zip
+            unzip -q gradle-fix.zip
+            cp gradle-7.0.2/lib/gradle-wrapper-7.0.2.jar "gradle/wrapper/gradle-wrapper.jar" || exit 1
+            
+            # 再次验证
+            if ! jar tf "gradle/wrapper/gradle-wrapper.jar" | grep -q "org/gradle/wrapper/GradleWrapperMain.class"; then
+              echo "❌ 无法修复Gradle Wrapper问题，终止构建"
+              exit 1
+            fi
+          }
+
+          # 验证关键文件
           critical_files=(
               "gradlew"
               "gradle/wrapper/gradle-wrapper.jar"
@@ -818,8 +824,10 @@ jobs:
           done
           echo "✅ 所有关键文件验证通过，开始编译"
 
-          # 执行编译（--stacktrace便于排查错误）
-          ./gradlew clean :app:assembleRelease --stacktrace || {
+          # 执行编译（增加详细日志）
+          chmod +x ./gradlew
+          ./gradlew --version
+          ./gradlew clean :app:assembleRelease --stacktrace --info || {
               echo "❌ 编译失败，打印输出目录结构"
               ls -la app/build/outputs/apk/release/ 2>/dev/null || true
               exit 1
@@ -837,14 +845,14 @@ jobs:
               exit 1
           fi
 
-          # 打包源码（供二次开发）
+          # 打包源码
           SOURCE_ZIP_DEST="/home/runner/work/webview-app/webview-app/${APP_NAME}-source-v${APP_VERSION_NAME}.zip"
           zip -q -r "$SOURCE_ZIP_DEST" "$ANDROID_ROOT" \
               -x "*/build/*" "*/.gradle/*" "*/.idea/*" "*/local.properties"
           echo "✅ 源码打包成功！路径：$SOURCE_ZIP_DEST"
           echo "SOURCE_ZIP_PATH=$SOURCE_ZIP_DEST" >> $GITHUB_ENV
 
-      - name: 发布到GitHub Releases（独立步骤）
+      - name: 发布到GitHub Releases
         run: |
           # 准备发布信息
           RELEASE_TAG="v${{ env.APP_VERSION_NAME }}"
@@ -863,9 +871,8 @@ jobs:
           2. 源码压缩包：可二次开发（完整项目结构）
           
           ### 修复说明
-          - 解决「单个run脚本字符超长（>21000）」问题
-          - 解决「org.gradle.wrapper.GradleWrapperMain类缺失」问题
-          - 解决「gradlew无执行权限」问题
+          - 解决「Gradle Wrapper类缺失」问题
+          - 强化Wrapper文件验证机制
           EOF
           )
 
@@ -873,7 +880,7 @@ jobs:
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
 
-          # 处理已存在的Tag（避免冲突）
+          # 处理已存在的Tag
           if git tag -l "$RELEASE_TAG" | grep -q "$RELEASE_TAG"; then
               echo "⚠️ Tag $RELEASE_TAG 已存在，删除旧Tag并重新创建"
               git tag -d "$RELEASE_TAG"
@@ -886,7 +893,7 @@ jobs:
           sudo apt-get install -y gh
           echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
 
-          # 创建Release（覆盖已存在的同名Release）
+          # 创建Release
           if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
               echo "⚠️ Release $RELEASE_TAG 已存在，更新内容"
               gh release delete "$RELEASE_TAG" -y
@@ -901,7 +908,7 @@ jobs:
 
           echo "✅ 发布成功！访问地址：https://github.com/${{ github.repository }}/releases/tag/$RELEASE_TAG"
 
-      - name: 清理构建产物（独立步骤）
+      - name: 清理构建产物
         run: |
           echo "🧹 开始清理冗余文件..."
           rm -rf "${{ env.ANDROID_ROOT }}"
