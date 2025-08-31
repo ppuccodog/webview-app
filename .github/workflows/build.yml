@@ -444,11 +444,10 @@ public class MainActivity extends Activity {
 }
 EOF
 
-          # 生成AndroidManifest.xml（关键修正：使用双引号分隔符并正确转义）
+          # 生成AndroidManifest.xml（完全修正版）
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-          package="$APP_PACKAGE">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="$APP_PACKAGE">
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
     
     <uses-permission android:name="android.permission.INTERNET"/>
