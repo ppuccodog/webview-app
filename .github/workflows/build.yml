@@ -1,4 +1,4 @@
-name: 安卓浏览器式套壳应用构建+自动发版（豆包2号）
+name: 安卓浏览器式套壳应用构建+自动发版（豆包2号修复版）
 on:
   workflow_dispatch:
 permissions:
@@ -57,7 +57,7 @@ jobs:
             "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https || exit 1
           fi
 
-          # 安装Gradle 7.0.2
+          # 安装Gradle 7.0.2（独立下载，确保gradle-wrapper可用）
           GRADLE_PATH="$HOME/gradle-7.0.2"
           if [ ! -d "$GRADLE_PATH" ]; then
             GRADLE_URL="https://mirrors.aliyun.com/gradle/gradle-7.0.2-bin.zip"
@@ -122,7 +122,7 @@ jobs:
           echo "版本名称：$APP_VERSION_NAME"
           echo "版本号（整数）：$APP_VERSION_CODE"
 
-      - name: 构建安卓套壳应用（集成多分辨率图标）
+      - name: 构建安卓套壳应用（集成多分辨率图标+修复gradlew缺失）
         run: |
           export JAVA_HOME="${{ env.JDK11_PATH }}"
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
@@ -137,28 +137,34 @@ jobs:
           APP_VERSION_CODE="${{ env.APP_VERSION_CODE }}"
           ANDROID_ROOT="${{ env.ANDROID_ROOT }}"
           
-          # 动态创建项目目录结构
+          # 动态创建项目目录结构（提前创建，确保路径存在）
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
-          APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"  # 按包名生成Java目录
-          APP_LAYOUT_DIR="$APP_DIR/src/main/res/layout"  # 布局文件目录
-          APP_DRAWABLE_DIR="$APP_DIR/src/main/res/drawable"  # 图片资源目录
+          APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"
+          APP_LAYOUT_DIR="$APP_DIR/src/main/res/layout"
+          APP_DRAWABLE_DIR="$APP_DIR/src/main/res/drawable"
           
-          # 清理旧项目残留并创建新目录
+          # 清理旧项目残留并创建完整目录树
           rm -rf "${{ env.PROJECT_PATH }}"
-          mkdir -p "$APP_JAVA_DIR"
-          mkdir -p "$APP_LAYOUT_DIR"
-          mkdir -p "$APP_DRAWABLE_DIR"
-          mkdir -p "$APP_DIR/src/main/res/values"  # 字符串/样式资源目录
-          mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"  # CordovaLib工具类目录
-
-          # 1. 创建多分辨率图标目录并处理图标文件
-          mkdir -p "$APP_DIR/src/main/res/mipmap-mdpi"
-          mkdir -p "$APP_DIR/src/main/res/mipmap-hdpi"
-          mkdir -p "$APP_DIR/src/main/res/mipmap-xhdpi"
-          mkdir -p "$APP_DIR/src/main/res/mipmap-xxhdpi"
+          mkdir -p "$APP_JAVA_DIR" \
+                   "$APP_LAYOUT_DIR" \
+                   "$APP_DRAWABLE_DIR" \
+                   "$APP_DIR/src/main/res/values" \
+                   "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova" \
+                   "$ANDROID_ROOT/gradle/wrapper"  # 提前创建gradle目录（关键修复）
           
-          # 图标路径映射（用户图标→安卓标准目录）
+          # 验证核心目录是否创建成功
+          if [ ! -d "$ANDROID_ROOT/gradle/wrapper" ]; then
+            echo "❌ 关键目录创建失败：$ANDROID_ROOT/gradle/wrapper"
+            exit 1
+          fi
+
+          # 1. 多分辨率图标处理（独立流程，不影响构建脚本）
+          mkdir -p "$APP_DIR/src/main/res/mipmap-mdpi" \
+                   "$APP_DIR/src/main/res/mipmap-hdpi" \
+                   "$APP_DIR/src/main/res/mipmap-xhdpi" \
+                   "$APP_DIR/src/main/res/mipmap-xxhdpi"
+          
           declare -A icon_mappings=(
               ["icon/48.png"]="mipmap-mdpi/ic_launcher.png"
               ["icon/72.png"]="mipmap-hdpi/ic_launcher.png"
@@ -166,7 +172,6 @@ jobs:
               ["icon/144.png"]="mipmap-xxhdpi/ic_launcher.png"
           )
           
-          # 复制用户图标（缺失时生成默认图标）
           missing_icons=0
           for src in "${!icon_mappings[@]}"; do
               dest="$APP_DIR/src/main/res/${icon_mappings[$src]}"
@@ -178,7 +183,7 @@ jobs:
                   missing_icons=1
               fi
           done
-          # 生成默认图标（蓝色圆形XML图标，适配所有分辨率）
+          # 生成默认图标（不影响构建脚本路径）
           if [ $missing_icons -eq 1 ]; then
             echo "⚠️ 生成默认图标..."
             for src in "${!icon_mappings[@]}"; do
@@ -193,20 +198,16 @@ jobs:
             done
           fi
 
-          # 2. 生成主布局文件（WebView+加载动画）
+          # 2. 生成应用核心资源文件（布局/动画/字符串）
           cat > "$APP_LAYOUT_DIR/activity_main.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
               android:layout_height="match_parent">
-
-              <!-- WebView核心：加载目标网址 -->
               <WebView
                   android:id="@+id/webview"
                   android:layout_width="match_parent"
                   android:layout_height="match_parent"/>
-
-              <!-- 加载动画容器（渐变背景+居中显示） -->
               <LinearLayout
                   android:id="@+id/loading_layout"
                   android:layout_width="match_parent"
@@ -214,16 +215,12 @@ jobs:
                   android:gravity="center"
                   android:orientation="vertical"
                   android:background="@drawable/loading_bg_gradient">
-
-                  <!-- 自定义圆形旋转进度条 -->
                   <ProgressBar
                       android:id="@+id/loading_progress"
                       android:layout_width="60dp"
                       android:layout_height="60dp"
                       android:indeterminate="true"
                       android:indeterminateDrawable="@drawable/loading_circle" />
-
-                  <!-- 加载提示文字 -->
                   <TextView
                       android:layout_width="wrap_content"
                       android:layout_height="wrap_content"
@@ -232,12 +229,10 @@ jobs:
                       android:textSize="18sp"
                       android:textColor="#333333"
                       android:textStyle="bold" />
-
               </LinearLayout>
           </RelativeLayout>
           EOF
 
-          # 3. 生成加载动画渐变背景
           cat > "$APP_DRAWABLE_DIR/loading_bg_gradient.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -251,7 +246,6 @@ jobs:
           </shape>
           EOF
 
-          # 4. 生成自定义圆形加载动画
           cat > "$APP_DRAWABLE_DIR/loading_circle.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <animated-rotate xmlns:android="http://schemas.android.com/apk/res/android"
@@ -260,13 +254,11 @@ jobs:
               android:pivotX="50%"
               android:pivotY="50%"
               android:toDegrees="360">
-
               <shape
                   android:innerRadius="20dp"
                   android:shape="ring"
                   android:thickness="6dp"
                   android:useLevel="false">
-
                   <gradient
                       android:centerColor="#40C4FF"
                       android:endColor="#00BFA5"
@@ -276,7 +268,6 @@ jobs:
           </animated-rotate>
           EOF
 
-          # 5. 生成字符串资源文件（应用名称+主题）
           cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
@@ -285,7 +276,7 @@ jobs:
           </resources>
           EOF
 
-          # 6. 生成CordovaLib模块：WebView工具类（封装核心逻辑）
+          # 3. 生成核心Java代码（WebView逻辑+主Activity）
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/WebViewHelper.java" << EOF
           package org.apache.cordova;
           import android.content.Context;
@@ -305,46 +296,39 @@ jobs:
               private WebView webView;
               private LinearLayout loadingLayout;
               private Context context;
-              private static final int LOAD_TIMEOUT = 80000;  // 加载超时时间（80秒）
+              private static final int LOAD_TIMEOUT = 80000;
 
               public WebViewHelper(Context context, WebView webView, LinearLayout loadingLayout) {
                   this.context = context;
                   this.webView = webView;
                   this.loadingLayout = loadingLayout;
-                  initWebViewSettings();  // 初始化WebView配置
+                  initWebViewSettings();
               }
 
-              // 初始化WebView基础设置
               private void initWebViewSettings() {
                   WebSettings webSettings = webView.getSettings();
-                  webSettings.setJavaScriptEnabled(true);  // 启用JavaScript
-                  webSettings.setDomStorageEnabled(true);  // 启用DOM存储
-                  webSettings.setAllowFileAccess(true);  // 允许访问文件
-                  webSettings.setAllowContentAccess(true);  // 允许内容访问
+                  webSettings.setJavaScriptEnabled(true);
+                  webSettings.setDomStorageEnabled(true);
+                  webSettings.setAllowFileAccess(true);
+                  webSettings.setAllowContentAccess(true);
                   
-                  // 适配Android 5.0+混合内容（HTTP+HTTPS）
                   if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                       webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                   }
                   
-                  // 缩放配置（支持缩放但隐藏缩放控件）
                   webSettings.setSupportZoom(true);
                   webSettings.setBuiltInZoomControls(true);
                   webSettings.setDisplayZoomControls(false);
-                  webSettings.setLoadWithOverviewMode(true);  // 自适应屏幕
-                  webSettings.setUseWideViewPort(true);  // 启用宽视图端口
-                  
-                  // 自定义UserAgent（模拟Chrome浏览器）
+                  webSettings.setLoadWithOverviewMode(true);
+                  webSettings.setUseWideViewPort(true);
                   webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.101 Mobile Safari/537.36");
               }
 
-              // 设置WebViewClient（处理页面加载状态、URL跳转、SSL错误）
               public void setWebViewClient() {
                   webView.setWebViewClient(new WebViewClient() {
                       @Override
                       public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                           super.onPageStarted(view, url, favicon);
-                          // 页面开始加载时显示加载动画
                           if (loadingLayout != null && loadingLayout.getVisibility() == View.GONE) {
                               loadingLayout.setVisibility(View.VISIBLE);
                           }
@@ -353,7 +337,6 @@ jobs:
                       @Override
                       public void onPageFinished(WebView view, String url) {
                           super.onPageFinished(view, url);
-                          // 页面加载完成后隐藏加载动画
                           if (loadingLayout != null && loadingLayout.getVisibility() == View.VISIBLE) {
                               loadingLayout.setVisibility(View.GONE);
                           }
@@ -361,35 +344,28 @@ jobs:
                       
                       @Override
                       public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                          // 拦截URL跳转，在当前WebView中打开
                           view.loadUrl(request.getUrl().toString());
                           return true;
                       }
                       
                       @Override
                       public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-                          // 忽略SSL证书错误（仅用于测试，生产环境需谨慎）
                           handler.proceed();
                       }
                       
                       @Override
                       public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                          // 资源加载错误时提示用户
                           Toast.makeText(context, "资源加载失败: " + description, Toast.LENGTH_LONG).show();
                           if (loadingLayout != null && loadingLayout.getVisibility() == View.VISIBLE) {
                               loadingLayout.setVisibility(View.GONE);
                           }
                       }
                   });
-                  
-                  // 设置WebChromeClient（处理网页标题、进度等）
                   webView.setWebChromeClient(new WebChromeClient());
               }
 
-              // 加载目标URL（含超时处理）
               public void loadUrl(String url) {
                   webView.loadUrl(url);
-                  // 超时处理：超过80秒未加载完成则关闭页面
                   new Handler().postDelayed(() -> {
                       if (webView.getProgress() < 100) {
                           Toast.makeText(context, "加载超时，即将关闭", Toast.LENGTH_SHORT).show();
@@ -398,14 +374,12 @@ jobs:
                   }, LOAD_TIMEOUT);
               }
 
-              // 获取WebView实例（供外部调用）
               public WebView getWebView() {
                   return webView;
               }
           }
           EOF
 
-          # 7. 生成主Activity（应用入口）
           cat > "$APP_JAVA_DIR/MainActivity.java" << EOF
           package $APP_PACKAGE;
           import android.app.Activity;
@@ -421,19 +395,16 @@ jobs:
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  setContentView(R.layout.activity_main);  // 加载主布局
+                  setContentView(R.layout.activity_main);
                   
-                  // 初始化控件
                   WebView webView = findViewById(R.id.webview);
                   LinearLayout loadingLayout = findViewById(R.id.loading_layout);
                   
-                  // 初始化WebViewHelper并加载目标URL
                   webViewHelper = new WebViewHelper(this, webView, loadingLayout);
                   webViewHelper.setWebViewClient();
                   webViewHelper.loadUrl("$CUSTOM_URL");
               }
               
-              // 重写返回键：优先返回上一页，无历史则退出
               @Override
               public void onBackPressed() {
                   if (webViewHelper != null && webViewHelper.getWebView().canGoBack()) {
@@ -443,7 +414,6 @@ jobs:
                   }
               }
               
-              // 生命周期管理：暂停WebView
               @Override
               protected void onPause() {
                   super.onPause();
@@ -452,7 +422,6 @@ jobs:
                   }
               }
               
-              // 生命周期管理：恢复WebView
               @Override
               protected void onResume() {
                   super.onResume();
@@ -461,7 +430,6 @@ jobs:
                   }
               }
               
-              // 生命周期管理：销毁WebView（防止内存泄漏）
               @Override
               protected void onDestroy() {
                   if (webViewHelper != null) {
@@ -471,18 +439,126 @@ jobs:
               }
           }
           EOF
-          # 8. 生成AndroidManifest.xml（修复原语法错误，规范属性格式）
+          # 4. 生成构建脚本核心文件（重点修复gradlew缺失问题）
+          # 4.1 生成gradle-wrapper.properties（指定Gradle版本，确保依赖正确）
+          cat > "$ANDROID_ROOT/gradle/wrapper/gradle-wrapper.properties" << 'EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-7.0.2-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
+
+          # 4.2 生成gradlew脚本（可执行，解决"找不到gradlew"错误）
+          cat > "$ANDROID_ROOT/gradlew" << 'EOF'
+          #!/usr/bin/env sh
+          ##############################################################################
+          #
+          #  Gradle start up script for UN*X
+          #
+          ##############################################################################
+
+          # Set local scope for the variables with windows NT shell
+          if [ -n "$OS" ] && [ -z "$CYGWIN" ]; then
+              OSC=
+              OSE=
+          else
+              OSC='${'
+              OSE='}'
+          fi
+
+          # Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+          DEFAULT_JVM_OPTS="-Xmx64m -Xms64m"
+
+          # Use the maximum available, or set MAX_FD != -1 to use that value.
+          MAX_FD=maximum
+          if [ "$MAX_FD" = "maximum" ] || [ "$MAX_FD" = "max" ]; then
+              # Get max file descriptor limit
+              MAX_FD=$(ulimit -H -n)
+              if [ $? -ne 0 ]; then
+                  echo "Warning: Unable to query maximum file descriptor limit"
+                  MAX_FD=1024
+              fi
+          fi
+
+          # For Cygwin, ensure paths are in UNIX format before anything is touched
+          if [ "$(uname)" = "CYGWIN" ] || [ "$(uname)" = "MINGW" ] || [ "$(uname)" = "MSYS" ]; then
+              [ -n "$JAVA_HOME" ] && JAVA_HOME=$(cygpath --unix "$JAVA_HOME")
+          fi
+
+          # Attempt to set APP_HOME
+          # Resolve links: $0 may be a link
+          PRG="$0"
+          # Need this for relative symlinks.
+          while [ -h "$PRG" ]; do
+              ls=$(ls -ld "$PRG")
+              link=$(expr "$ls" : '.*-> \(.*\)$')
+              if expr "$link" : '/.*' > /dev/null; then
+                  PRG="$link"
+              else
+                  PRG=$(dirname "$PRG")"/$link"
+              fi
+          done
+          SAVED="$(pwd)"
+          cd "$(dirname "$PRG")" > /dev/null
+          APP_HOME="$(pwd -P)"
+          cd "$SAVED" > /dev/null
+
+          # Find java.exe
+          if [ -n "$JAVA_HOME" ]; then
+              JAVACMD="$JAVA_HOME/bin/java"
+              if [ ! -x "$JAVACMD" ]; then
+                  echo "ERROR: JAVA_HOME is set to an invalid directory: $JAVA_HOME"
+                  echo "Please set the JAVA_HOME variable in your environment to match the"
+                  echo "location of your Java installation."
+                  exit 1
+              fi
+          else
+              JAVACMD="java"
+              if ! command -v java > /dev/null 2>&1; then
+                  echo "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH."
+                  echo "Please set the JAVA_HOME variable in your environment to match the"
+                  echo "location of your Java installation."
+                  exit 1
+              fi
+          fi
+
+          # Increase the maximum file descriptors if we can
+          if [ "$MAX_FD" -gt 1024 ]; then
+              if [ "$(uname)" = "Darwin" ]; then
+                  # macOS only supports ulimit -n up to the hard limit
+                  HARD_MAX_FD=$(ulimit -H -n)
+                  if [ "$HARD_MAX_FD" -lt "$MAX_FD" ]; then
+                      echo "Warning: The hard limit for file descriptors ($HARD_MAX_FD) is less than the requested maximum ($MAX_FD)"
+                      MAX_FD="$HARD_MAX_FD"
+                  fi
+              fi
+              ulimit -n "$MAX_FD"
+              if [ $? -ne 0 ]; then
+                  echo "Warning: Unable to set maximum file descriptor limit to $MAX_FD"
+              fi
+          fi
+
+          # Collect all arguments for the java command, following the shell quoting and substitution rules
+          eval set -- $DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS "\"-Dorg.gradle.appname=$APP_BASE_NAME\"" -classpath "\"$CLASSPATH\"" org.gradle.wrapper.GradleWrapperMain "$@"
+
+          # Execute the java command
+          exec "$JAVACMD" "$@"
+          EOF
+
+          # 4.3 赋予gradlew可执行权限（关键步骤，避免权限不足）
+          chmod +x "$ANDROID_ROOT/gradlew"
+          echo "✅ 已生成gradlew并赋予可执行权限，路径：$ANDROID_ROOT/gradlew"
+
+          # 4.4 生成AndroidManifest.xml（修复语法错误，确保编译通过）
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="$APP_PACKAGE">
-
-              <!-- 应用所需权限 -->
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
-              <!-- 应用配置（修复图标属性语法，确保属性间空格分隔） -->
               <application
                   android:name="android.app.Application"
                   android:allowBackup="true"
@@ -493,20 +569,17 @@ jobs:
                   android:theme="@style/AppTheme"
                   android:hardwareAccelerated="true">
 
-                  <!-- 主Activity配置（设置为启动页） -->
                   <activity
                       android:name="$APP_PACKAGE.MainActivity"
                       android:exported="true"
                       android:launchMode="singleTask"
                       android:configChanges="orientation|keyboardHidden|screenSize">
-
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
 
-                  <!-- 配置WebView优化参数 -->
                   <activity
                       android:name="org.apache.cordova.engine.SystemWebViewActivity"
                       android:configChanges="orientation|keyboardHidden|screenSize"
@@ -522,12 +595,16 @@ jobs:
                           android:resource="@xml/file_paths" />
                   </provider>
               </application>
-
           </manifest>
           EOF
 
-          # 9. 生成CordovaLib模块的build.gradle
-          cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
+          # 5. 生成项目构建配置文件（确保编译依赖正确）
+          cat > "$ANDROID_ROOT/settings.gradle" << EOF
+          include ':app', ':CordovaLib'
+          rootProject.name = '$APP_NAME'
+          EOF
+
+          cat > "$ANDROID_ROOT/build.gradle" << EOF
           buildscript {
               repositories {
                   mavenCentral()
@@ -538,6 +615,65 @@ jobs:
               }
           }
 
+          allprojects {
+              repositories {
+                  mavenCentral()
+                  google()
+              }
+          }
+
+          task clean(type: Delete) {
+              delete rootProject.buildDir
+          }
+          EOF
+
+          cat > "$APP_DIR/build.gradle" << EOF
+          apply plugin: 'com.android.application'
+
+          android {
+              compileSdkVersion 30
+              buildToolsVersion "30.0.2"
+
+              defaultConfig {
+                  applicationId "$APP_PACKAGE"
+                  minSdkVersion 21
+                  targetSdkVersion 30
+                  versionCode $APP_VERSION_CODE
+                  versionName "$APP_VERSION_NAME"
+                  multiDexEnabled true
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled true
+                      shrinkResources true
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                      signingConfig signingConfigs.debug
+                  }
+              }
+
+              lintOptions {
+                  abortOnError false
+                  checkReleaseBuilds false
+              }
+
+              packagingOptions {
+                  exclude 'META-INF/LICENSE'
+                  exclude 'META-INF/LICENSE.txt'
+                  exclude 'META-INF/NOTICE'
+                  exclude 'META-INF/NOTICE.txt'
+              }
+          }
+
+          dependencies {
+              implementation project(':CordovaLib')
+              implementation 'androidx.appcompat:appcompat:1.3.1'
+              implementation 'androidx.multidex:multidex:2.0.1'
+              implementation 'androidx.core:core:1.6.0'
+          }
+          EOF
+
+          cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           apply plugin: 'com.android.library'
 
           android {
@@ -569,226 +705,75 @@ jobs:
           }
           EOF
 
-          # 10. 生成App模块的build.gradle
-          cat > "$APP_DIR/build.gradle" << EOF
-          buildscript {
-              repositories {
-                  mavenCentral()
-                  google()
-              }
-              dependencies {
-                  classpath 'com.android.tools.build:gradle:4.2.2'
-              }
-          }
+          # 6. 执行编译（添加路径验证，确保gradlew可正常调用）
+          echo "🔨 开始编译安卓应用，验证项目目录..."
+          if [ ! -d "$ANDROID_ROOT" ]; then
+              echo "❌ 项目根目录不存在: $ANDROID_ROOT"
+              exit 1
+          fi
+          cd "$ANDROID_ROOT" || exit 1
 
-          apply plugin: 'com.android.application'
+          # 验证gradlew是否存在且可执行
+          if [ ! -f "gradlew" ]; then
+              echo "❌ gradlew文件缺失，路径: $(pwd)"
+              exit 1
+          fi
+          if [ ! -x "gradlew" ]; then
+              echo "⚠️ gradlew无执行权限，重新赋予权限..."
+              chmod +x "gradlew"
+          fi
 
-          android {
-              compileSdkVersion 30
-              buildToolsVersion "30.0.2"
-
-              defaultConfig {
-                  applicationId "$APP_PACKAGE"
-                  minSdkVersion 21
-                  targetSdkVersion 30
-                  versionCode $APP_VERSION_CODE
-                  versionName "$APP_VERSION_NAME"
-                  multiDexEnabled true
-              }
-
-              buildTypes {
-                  release {
-                      minifyEnabled true
-                      shrinkResources true
-                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-                      signingConfig signingConfigs.debug  // 测试环境使用debug签名，生产环境需替换为正式签名
-                  }
-              }
-
-              lintOptions {
-                  abortOnError false
-                  checkReleaseBuilds false
-              }
-
-              packagingOptions {
-                  exclude 'META-INF/LICENSE'
-                  exclude 'META-INF/LICENSE.txt'
-                  exclude 'META-INF/NOTICE'
-                  exclude 'META-INF/NOTICE.txt'
-              }
-          }
-
-          dependencies {
-              implementation project(':CordovaLib')
-              implementation 'androidx.appcompat:appcompat:1.3.1'
-              implementation 'androidx.multidex:multidex:2.0.1'
-              implementation 'androidx.core:core:1.6.0'
-          }
-          EOF
-
-          # 11. 生成项目根目录settings.gradle
-          cat > "$ANDROID_ROOT/settings.gradle" << EOF
-          include ':app', ':CordovaLib'
-          rootProject.name = '$APP_NAME'
-          EOF
-
-          # 12. 生成项目根目录build.gradle
-          cat > "$ANDROID_ROOT/build.gradle" << EOF
-          buildscript {
-              repositories {
-                  mavenCentral()
-                  google()
-              }
-              dependencies {
-                  classpath 'com.android.tools.build:gradle:4.2.2'
-              }
-          }
-
-          allprojects {
-              repositories {
-                  mavenCentral()
-                  google()
-              }
-          }
-
-          task clean(type: Delete) {
-              delete rootProject.buildDir
-          }
-          EOF
-
-          # 13. 生成混淆规则文件（保护资源引用不被混淆）
-          cat > "$APP_DIR/proguard-rules.pro" << EOF
-          # 基础混淆配置
-          -optimizationpasses 5
-          -dontusemixedcaseclassnames
-          -dontskipnonpubliclibraryclasses
-          -dontpreverify
-          -verbose
-          -optimizations !code/simplification/arithmetic,!field/*,!class/merging/*
-
-          # 保护Android基础组件
-          -keep public class * extends android.app.Activity
-          -keep public class * extends android.app.Application
-          -keep public class * extends android.app.Service
-          -keep public class * extends android.content.BroadcastReceiver
-          -keep public class * extends android.content.ContentProvider
-          -keep public class * extends android.app.backup.BackupAgentHelper
-          -keep public class * extends android.preference.Preference
-
-          # 保护WebView相关类
-          -keep public class * extends android.webkit.WebView
-          -keep public class * extends android.webkit.WebViewClient
-          -keep public class * extends android.webkit.WebChromeClient
-          -keep class org.apache.cordova.** { *; }
-
-          # 保护资源引用（防止图标/布局引用被混淆）
-          -keep class $APP_PACKAGE.R$drawable { *; }
-          -keep class $APP_PACKAGE.R$layout { *; }
-          -keep class $APP_PACKAGE.R$mipmap { *; }
-          -keep class $APP_PACKAGE.R$string { *; }
-          -keep class $APP_PACKAGE.R$style { *; }
-
-          # 保护Activity生命周期方法
-          -keepclassmembers public class * extends android.app.Activity {
-              public void *(android.view.View);
-              public void onBackPressed();
-              public void onCreate(android.os.Bundle);
-              public void onPause();
-              public void onResume();
-              public void onDestroy();
-          }
-          EOF
-
-          # 14. 执行编译（生成Release版APK）
-          echo "🔨 开始编译安卓应用..."
-          cd "$ANDROID_ROOT"
-          chmod +x gradlew
+          # 执行编译命令
           ./gradlew clean :app:assembleRelease --stacktrace
 
-          # 验证APK是否生成成功
+          # 7. 处理编译产物（APK+源码包）
           APK_PATH="$APP_DIR/build/outputs/apk/release/app-release.apk"
           if [ -f "$APK_PATH" ]; then
-              echo "✅ APK编译成功！路径：$APK_PATH"
-              # 重命名APK（含版本信息，便于识别）
               APK_DEST="/home/runner/work/webview-app/webview-app/CustomBrowser-v$APP_VERSION_NAME.apk"
               cp "$APK_PATH" "$APK_DEST"
-              echo "✅ APK重命名完成：$APK_DEST"
+              echo "✅ APK编译成功: $APK_DEST"
               echo "APK_PATH=$APK_DEST" >> $GITHUB_ENV
           else
-              echo "❌ APK编译失败！未找到输出文件"
+              echo "❌ APK编译失败，未找到输出文件"
               exit 1
           fi
 
-          # 15. 打包安卓源码（排除编译产物，仅保留纯净源码）
-          echo "📦 开始打包安卓源码..."
+          # 打包源码（排除编译产物）
           SOURCE_ZIP_DEST="/home/runner/work/webview-app/webview-app/CustomBrowser-source-v$APP_VERSION_NAME.zip"
-          # 排除build、.gradle等临时目录，仅保留核心源码文件
           zip -q -r "$SOURCE_ZIP_DEST" "$ANDROID_ROOT" \
-              -x "*/build/*" "*/.gradle/*" "*/gradle/*" "*/.idea/*" "*/.gitignore" "*/local.properties"
-          
-          if [ -f "$SOURCE_ZIP_DEST" ]; then
-              echo "✅ 源码打包成功！路径：$SOURCE_ZIP_DEST"
-              echo "SOURCE_ZIP_PATH=$SOURCE_ZIP_DEST" >> $GITHUB_ENV
-          else
-              echo "❌ 源码打包失败！"
-              exit 1
-          fi
+              -x "*/build/*" "*/.gradle/*" "*/gradle/*" "*/.idea/*"
+          echo "✅ 源码打包成功: $SOURCE_ZIP_DEST"
+          echo "SOURCE_ZIP_PATH=$SOURCE_ZIP_DEST" >> $GITHUB_ENV
 
       - name: 发布到GitHub Releases
         run: |
-          # 准备发布参数
           RELEASE_TAG="v${{ env.APP_VERSION_NAME }}"
           RELEASE_TITLE="Custom Browser v${{ env.APP_VERSION_NAME }}"
           RELEASE_BODY=$(cat << EOF
           ## 自定义浏览器应用 v${{ env.APP_VERSION_NAME }}
-          
-          ### 构建信息
           - 目标网址：${{ env.CUSTOM_URL }}
           - 应用包名：${{ env.APP_PACKAGE }}
-          - 支持系统：Android 5.0+（API 21+）
-          - 构建时间：$(date +"%Y-%m-%d %H:%M:%S")
-          
-          ### 包含文件
-          1. APK安装包：直接安装到安卓设备
-          2. 源码压缩包：可二次开发（含完整项目结构）
-          
-          ### 功能说明
-          - 加载指定网址（支持JavaScript、DOM存储）
-          - 自定义加载动画（渐变背景+圆形进度条）
-          - 多分辨率图标适配（支持用户自定义图标）
-          - 返回键导航（优先返回上一页，无历史则退出）
-          - 加载超时处理（80秒超时自动关闭）
+          - 支持系统：Android 5.0+
+          - 修复内容：解决gradlew缺失导致的编译失败问题
           EOF
           )
 
-          # 创建Git Tag并推送
+          # 推送Tag并创建Release
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           git tag -a "$RELEASE_TAG" -m "$RELEASE_TITLE"
           git push origin "$RELEASE_TAG"
 
-          # 安装GitHub CLI工具（用于创建Release）
           sudo apt-get install -y gh
-
-          # 登录GitHub CLI（使用Actions密钥）
           echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
-
-          # 创建Release并上传文件
           gh release create "$RELEASE_TAG" \
               --title "$RELEASE_TITLE" \
               --body "$RELEASE_BODY" \
-              --draft=false \
-              --prerelease=false \
               "${{ env.APK_PATH }}" \
               "${{ env.SOURCE_ZIP_PATH }}"
 
-          echo "✅ 发布成功！可访问：https://github.com/${{ github.repository }}/releases/tag/$RELEASE_TAG"
-
-      - name: 清理构建产物（可选，节省存储空间）
+      - name: 清理构建产物
         run: |
-          echo "🧹 开始清理构建产物..."
           rm -rf "${{ env.ANDROID_ROOT }}"
           rm -rf "${{ env.PROJECT_PATH }}"
-          rm -rf "${{ env.GRADLE_PATH }}"
-          rm -rf "${{ env.ANDROID_HOME }}"
-          echo "✅ 清理完成！"
+          echo "✅ 清理完成"
