@@ -14,11 +14,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: 安装安卓构建依赖（含PNG生成工具）
+      - name: 安装安卓构建依赖（含图片处理工具）
         run: |
           export TIMEOUT=300
           
-          # 替换为阿里云Ubuntu镜像源（解决卡包问题）
+          # 替换为阿里云Ubuntu镜像源
           sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
           sudo tee /etc/apt/sources.list > /dev/null << EOF
           deb http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse
@@ -27,7 +27,7 @@ jobs:
           deb http://mirrors.aliyun.com/ubuntu/ noble-security main restricted universe multiverse
           EOF
           
-          # 安装JDK 11 + imagemagick（新增：用于生成纯色PNG图标）
+          # 安装依赖（包含imagemagick用于图片处理）
           sudo apt-get update -o Acquire::ForceIPv4=true
           sudo apt-get install -y -qq openjdk-11-jdk imagemagick
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
@@ -70,16 +70,16 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 读取 config.txt 配置（网址/包名/应用名/版本号）
+      - name: 读取 config.txt 配置
         run: |
-          # 定义默认配置（防止 config.txt 缺失）
+          # 定义默认配置
           DEFAULT_CUSTOM_URL="https://www.baidu.com"
           DEFAULT_APP_PACKAGE="com.my.browserapp"
           DEFAULT_APP_NAME="自定义浏览器"
           DEFAULT_APP_VERSION_NAME="1.0.0"
           DEFAULT_APP_VERSION_CODE="1"
 
-          # 读取 config.txt（格式：键=值，每行一个配置）
+          # 读取 config.txt
           if [ -f "config.txt" ]; then
             echo "✅ 读取 config.txt 配置..."
             CUSTOM_URL=$(grep -E "^CUSTOM_URL=" config.txt | cut -d'=' -f2- | sed 's/^[ \t]*//;s/[ \t]*$//' || echo "$DEFAULT_CUSTOM_URL")
@@ -120,35 +120,48 @@ jobs:
           echo "应用名称：$APP_NAME"
           echo "版本名称：$APP_VERSION_NAME"
           echo "版本号（整数）：$APP_VERSION_CODE"
-      # 新增步骤：生成纯色PNG应用图标（适配Android标准尺寸，便于MT管理器替换）
-      - name: 生成纯色PNG应用图标（Android标准尺寸）
+
+      - name: 准备图标资源（使用项目icon目录下的72.png）
         run: |
-          # 定义Android图标标准尺寸（mipmap目录，MT管理器可直接识别）
+          # 检查图标文件是否存在
+          if [ ! -f "icon/72.png" ]; then
+            echo "❌ 未找到 icon/72.png 文件，请确保该文件存在于项目根目录的icon文件夹中"
+            exit 1
+          fi
+          
+          # 定义Android图标标准尺寸
           declare -A ICON_SIZES=(
             ["mdpi"]="48x48"    # 基础密度
-            ["hdpi"]="72x72"    # 1.5倍密度
+            ["hdpi"]="72x72"    # 1.5倍密度（使用原始72.png）
             ["xhdpi"]="96x96"   # 2倍密度
-            ["xxhdpi"]="144x144" # 3倍密度（主流设备适配）
+            ["xxhdpi"]="144x144" # 3倍密度
           )
-          # 图标输出根目录
+          
+          # 创建临时图标处理目录
           ICON_BASE_DIR="$HOME/app_icons"
           mkdir -p $ICON_BASE_DIR
-          echo "📁 图标生成目录：$ICON_BASE_DIR"
-
-          # 生成纯色图标（蓝色#2196F3，简洁易替换，可修改颜色值）
+          echo "📁 图标处理目录：$ICON_BASE_DIR"
+          
+          # 处理各个密度的图标（hdpi直接使用原始72.png，其他密度按比例缩放）
           for density in "${!ICON_SIZES[@]}"; do
             size=${ICON_SIZES[$density]}
             output_path="$ICON_BASE_DIR/ic_launcher_$density.png"
             
-            # 使用imagemagick生成纯色PNG（无复杂图案，方便后期替换）
-            convert -size $size xc:#2196F3 $output_path
-            echo "✅ 生成$density图标：$output_path（尺寸：$size）"
+            if [ "$density" = "hdpi" ]; then
+              # HDPI直接复制原始文件（72x72）
+              cp "icon/72.png" "$output_path"
+              echo "✅ 使用原始图标：$output_path（尺寸：$size）"
+            else
+              # 其他密度从原始图标缩放生成
+              convert "icon/72.png" -resize $size! "$output_path"
+              echo "✅ 缩放生成图标：$output_path（尺寸：$size）"
+            fi
           done
-
-          # 写入环境变量，供后续构建步骤使用
+          
+          # 写入环境变量
           echo "ICON_BASE_DIR=$ICON_BASE_DIR" >> $GITHUB_ENV
 
-      - name: 构建安卓套壳应用（初始化项目结构+引入图标）
+      - name: 构建安卓套壳应用
         run: |
           export JAVA_HOME="${{ env.JDK11_PATH }}"
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
@@ -161,20 +174,18 @@ jobs:
           APP_NAME="${{ env.APP_NAME }}"
           APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
           APP_VERSION_CODE="${{ env.APP_VERSION_CODE }}"
-          ICON_BASE_DIR="${{ env.ICON_BASE_DIR }}" # 读取图标目录
+          ICON_BASE_DIR="${{ env.ICON_BASE_DIR }}"
 
-          # 动态创建项目目录（按包名生成Java目录结构）
+          # 动态创建项目目录
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
-          # app模块的Java目录（存放主Activity，引用布局资源）
           APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"
-          # 布局资源放在app模块（CordovaLib不再依赖）
           APP_LAYOUT_DIR="$APP_DIR/src/main/res/layout"
-          # 图片/动画资源目录
           APP_DRAWABLE_DIR="$APP_DIR/src/main/res/drawable"
-          # 新增：创建mipmap图标目录（Android标准图标路径）
+          
+          # 图标目录
           APP_ICON_DIRS=(
             "$APP_DIR/src/main/res/mipmap-mdpi"
             "$APP_DIR/src/main/res/mipmap-hdpi"
@@ -189,32 +200,29 @@ jobs:
           mkdir -p "$APP_DRAWABLE_DIR"
           mkdir -p "$APP_DIR/src/main/res/values"
           mkdir -p "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
-          # 新增：创建所有mipmap图标目录
           for dir in "${APP_ICON_DIRS[@]}"; do
             mkdir -p "$dir"
           done
 
-          # 新增：复制生成的纯色图标到对应mipmap目录（命名为ic_launcher.png，Android默认图标名）
+          # 复制图标到项目mipmap目录
           cp "$ICON_BASE_DIR/ic_launcher_mdpi.png" "$APP_DIR/src/main/res/mipmap-mdpi/ic_launcher.png"
           cp "$ICON_BASE_DIR/ic_launcher_hdpi.png" "$APP_DIR/src/main/res/mipmap-hdpi/ic_launcher.png"
           cp "$ICON_BASE_DIR/ic_launcher_xhdpi.png" "$APP_DIR/src/main/res/mipmap-xhdpi/ic_launcher.png"
           cp "$ICON_BASE_DIR/ic_launcher_xxhdpi.png" "$APP_DIR/src/main/res/mipmap-xxhdpi/ic_launcher.png"
-          echo "✅ 纯色图标已复制到项目mipmap目录"
+          echo "✅ 图标已复制到项目目录"
 
-          # 生成主布局文件（带优化的加载动画）
+          # 生成主布局文件
           cat > "$APP_LAYOUT_DIR/activity_main.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
               android:layout_height="match_parent">
 
-              <!-- WebView：加载目标网页 -->
               <WebView
                   android:id="@+id/webview"
                   android:layout_width="match_parent"
                   android:layout_height="match_parent"/>
 
-              <!-- 加载动画容器：渐变背景+居中布局 -->
               <LinearLayout
                   android:id="@+id/loading_layout"
                   android:layout_width="match_parent"
@@ -223,7 +231,6 @@ jobs:
                   android:orientation="vertical"
                   android:background="@drawable/loading_bg_gradient">
 
-                  <!-- 自定义圆形旋转进度条 -->
                   <ProgressBar
                       android:id="@+id/loading_progress"
                       android:layout_width="60dp"
@@ -231,7 +238,6 @@ jobs:
                       android:indeterminate="true"
                       android:indeterminateDrawable="@drawable/loading_circle" />
 
-                  <!-- 加载文字：加粗+大字号 -->
                   <TextView
                       android:layout_width="wrap_content"
                       android:layout_height="wrap_content"
@@ -283,6 +289,7 @@ jobs:
               </shape>
           </animated-rotate>
           EOF
+
           # 生成字符串资源文件
           cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
@@ -291,6 +298,7 @@ jobs:
               <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
           </resources>
           EOF
+          
           # 生成CordovaLib模块的WebView工具类
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/WebViewHelper.java" << EOF
           package org.apache.cordova;
@@ -307,22 +315,19 @@ jobs:
           import android.widget.LinearLayout;
           import android.widget.Toast;
 
-          // 通用WebView工具类：接收外部传入的WebView和加载布局，不直接引用R资源
           public class WebViewHelper {
               private WebView webView;
               private LinearLayout loadingLayout;
               private Context context;
-              private static final int LOAD_TIMEOUT = 80000;  // 80秒加载超时
+              private static final int LOAD_TIMEOUT = 80000;
 
-              // 构造方法：从外部传入Context、WebView、加载布局（消除资源依赖）
               public WebViewHelper(Context context, WebView webView, LinearLayout loadingLayout) {
                   this.context = context;
                   this.webView = webView;
                   this.loadingLayout = loadingLayout;
-                  initWebViewSettings();  // 初始化WebView配置
+                  initWebViewSettings();
               }
 
-              // 初始化WebView基础配置
               private void initWebViewSettings() {
                   WebSettings webSettings = webView.getSettings();
                   webSettings.setJavaScriptEnabled(true);
@@ -343,10 +348,8 @@ jobs:
                   webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.101 Mobile Safari/537.36");
               }
 
-              // 设置WebViewClient（控制加载动画）
               public void setWebViewClient() {
                   webView.setWebViewClient(new WebViewClient() {
-                      // 网页开始加载：显示动画
                       @Override
                       public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                           super.onPageStarted(view, url, favicon);
@@ -355,7 +358,6 @@ jobs:
                           }
                       }
                       
-                      // 网页加载完成：隐藏动画
                       @Override
                       public void onPageFinished(WebView view, String url) {
                           super.onPageFinished(view, url);
@@ -364,20 +366,17 @@ jobs:
                           }
                       }
                       
-                      // 链接跳转处理
                       @Override
                       public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                           view.loadUrl(request.getUrl().toString());
                           return true;
                       }
                       
-                      // SSL证书错误处理
                       @Override
                       public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
                           handler.proceed();
                       }
                       
-                      // 加载错误处理
                       @Override
                       public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
                           Toast.makeText(context, "资源加载失败: " + description, Toast.LENGTH_LONG).show();
@@ -387,14 +386,11 @@ jobs:
                       }
                   });
                   
-                  // JS弹窗支持
                   webView.setWebChromeClient(new WebChromeClient());
               }
 
-              // 加载目标网址
               public void loadUrl(String url) {
                   webView.loadUrl(url);
-                  // 加载超时处理
                   new Handler().postDelayed(() -> {
                       if (webView.getProgress() < 100) {
                           Toast.makeText(context, "加载超时，即将关闭", Toast.LENGTH_SHORT).show();
@@ -403,7 +399,6 @@ jobs:
                   }, LOAD_TIMEOUT);
               }
 
-              // 获取WebView实例（供外部调用后退等方法）
               public WebView getWebView() {
                   return webView;
               }
@@ -417,33 +412,25 @@ jobs:
           import android.os.Bundle;
           import android.webkit.WebView;
           import android.widget.LinearLayout;
-          // 导入CordovaLib的通用工具类
           import org.apache.cordova.WebViewHelper;
-          // 引用app模块的R资源
           import $APP_PACKAGE.R;
 
           public class MainActivity extends Activity {
-              private WebViewHelper webViewHelper;  // 通用WebView工具类实例
+              private WebViewHelper webViewHelper;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  // 加载app模块的布局资源
                   setContentView(R.layout.activity_main);
                   
-                  // 从布局中获取WebView和加载动画控件
                   WebView webView = findViewById(R.id.webview);
                   LinearLayout loadingLayout = findViewById(R.id.loading_layout);
                   
-                  // 初始化CordovaLib的工具类
                   webViewHelper = new WebViewHelper(this, webView, loadingLayout);
-                  webViewHelper.setWebViewClient();  // 设置WebViewClient
-                  
-                  // 加载目标网址
+                  webViewHelper.setWebViewClient();
                   webViewHelper.loadUrl("$CUSTOM_URL");
               }
               
-              // 返回键后退逻辑
               @Override
               public void onBackPressed() {
                   if (webViewHelper != null && webViewHelper.getWebView().canGoBack()) {
@@ -453,7 +440,6 @@ jobs:
                   }
               }
               
-              // 页面生命周期处理
               @Override
               protected void onPause() {
                   super.onPause();
@@ -479,15 +465,14 @@ jobs:
               }
           }
           EOF
-          # 生成AndroidManifest.xml清单文件
+          
+          # 生成AndroidManifest.xml清单文件（明确指定图标）
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
                     package="$APP_PACKAGE">
-              <!-- 配置支持的SDK版本 -->
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
               
-              <!-- 申请必要权限 -->
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
@@ -496,19 +481,18 @@ jobs:
                   android:label="$APP_NAME"
                   android:theme="@style/AppTheme"
                   android:hardwareAccelerated="true"
-                  android:usesCleartextTraffic="true">
+                  android:usesCleartextTraffic="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher">
                   
-                  <!-- 主Activity配置 -->
                   <activity 
                       android:name=".MainActivity"
                       android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"
                       android:launchMode="singleTask">
-                      <!-- 配置为启动页 -->
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
-                      <!-- 支持HTTP/HTTPS链接跳转 -->
                       <intent-filter>
                           <action android:name="android.intent.action.VIEW"/>
                           <category android:name="android.intent.category.DEFAULT"/>
@@ -523,17 +507,10 @@ jobs:
 
           # 生成Gradle基础配置
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
-          # 启用AndroidX支持
           android.useAndroidX=true
-          # 关闭Jetifier
           android.enableJetifier=false
-          
-          # 配置Gradle内存
           org.gradle.jvmargs=-Xmx1536m
-          
-          # 启用并行构建
           org.gradle.parallel=true
-          # 启用构建缓存
           org.gradle.caching=true
           EOF
 
@@ -575,6 +552,7 @@ jobs:
               implementation 'androidx.appcompat:appcompat:1.0.2'
           }
           EOF
+          
           # 生成主应用模块配置
           cat > "$APP_DIR/build.gradle" << EOF
           buildscript {
@@ -626,7 +604,6 @@ jobs:
 
           # 生成混淆规则
           cat > "$APP_DIR/proguard-rules.pro" << EOF
-          # 保护WebView相关类
           -keepclassmembers class * extends android.webkit.WebViewClient {
               public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
               public boolean *(android.webkit.WebView, java.lang.String);
@@ -635,13 +612,11 @@ jobs:
               public void *(android.webkit.WebView, java.lang.String);
           }
           
-          # 保护app模块的R资源类
           -keep class $APP_PACKAGE.R { *; }
           -keep class $APP_PACKAGE.R$layout { *; }
           -keep class $APP_PACKAGE.R$id { *; }
           -keep class $APP_PACKAGE.R$string { *; }
           
-          # 保护CordovaLib的工具类
           -keep class org.apache.cordova.WebViewHelper { *; }
           -keepclassmembers class org.apache.cordova.WebViewHelper {
               public <init>(android.content.Context, android.webkit.WebView, android.widget.LinearLayout);
@@ -717,3 +692,4 @@ jobs:
           files: /home/runner/work/webview-app/webview-app/CustomBrowser-v${{ env.APP_VERSION_NAME }}.apk
           draft: false
           prerelease: false
+    
