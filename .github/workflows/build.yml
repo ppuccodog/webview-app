@@ -651,6 +651,43 @@ jobs:
             exit 1
           fi
 
+      - name: 打包安卓源码为ZIP
+        run: |
+          # 读取版本信息
+          APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
+          
+          # 源码目录（与构建步骤中定义的ANDROID_ROOT一致）
+          ANDROID_ROOT="/home/runner/work/webview-app/webview-app/myapp/android-project"
+          
+          # 输出ZIP文件路径
+          SOURCE_ZIP_DEST="/home/runner/work/webview-app/webview-app/CustomBrowser-source-v$APP_VERSION_NAME.zip"
+          
+          # 检查源码目录是否存在
+          if [ ! -d "$ANDROID_ROOT" ]; then
+            echo "❌ 未找到安卓源码目录：$ANDROID_ROOT"
+            exit 1
+          fi
+          
+          # 打包源码（排除构建缓存和临时文件）
+          echo "=== 开始打包安卓源码 ==="
+          cd "$ANDROID_ROOT/.." || exit 1
+          zip -r -q "$SOURCE_ZIP_DEST" "android-project" \
+            --exclude "*/build/*" \
+            --exclude "*/.gradle/*" \
+            --exclude "*/local.properties" \
+            --exclude "*/.gitignore"
+          
+          # 验证ZIP文件
+          if [ -f "$SOURCE_ZIP_DEST" ]; then
+            echo "✅ 源码打包完成：$SOURCE_ZIP_DEST"
+            echo "📦 ZIP文件大小：$(du -h "$SOURCE_ZIP_DEST")"
+            # 写入环境变量供发布步骤使用
+            echo "SOURCE_ZIP_PATH=$SOURCE_ZIP_DEST" >> $GITHUB_ENV
+          else
+            echo "❌ 源码打包失败"
+            exit 1
+          fi
+
       - name: 创建并推送Git Tag
         run: |
           APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
@@ -672,7 +709,7 @@ jobs:
           fi
           echo "✅ Git Tag推送成功：$TAG_NAME"
 
-      - name: 发布APK到GitHub Releases
+      - name: 发布APK和源码到GitHub Releases
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -688,8 +725,11 @@ jobs:
             - 核心功能：网页加载+自定义加载动画
             
             ### 📥 下载
-            点击Assets中的APK文件下载安装
-          files: /home/runner/work/webview-app/webview-app/CustomBrowser-v${{ env.APP_VERSION_NAME }}.apk
+            - APK安装包：适合直接安装到Android设备
+            - 源码ZIP：包含完整安卓项目源码，可用于二次开发
+          files: |
+            /home/runner/work/webview-app/webview-app/CustomBrowser-v${{ env.APP_VERSION_NAME }}.apk
+            ${{ env.SOURCE_ZIP_PATH }}
           draft: false
           prerelease: false
     
