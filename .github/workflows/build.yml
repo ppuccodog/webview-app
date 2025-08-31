@@ -444,8 +444,8 @@ public class MainActivity extends Activity {
 }
 EOF
 
-          # 生成AndroidManifest.xml（已修复YAML语法）
-          cat > "$APP_DIR/src/main/AndroidManifest.xml" << 'EOF'
+          # 生成AndroidManifest.xml（关键修正：使用双引号分隔符并正确转义）
+          cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
           package="$APP_PACKAGE">
