@@ -350,7 +350,7 @@ public class WebViewHelper {
 EOF
 
           # 生成主Activity
-          cat > "$APP_JAVA_DIR/MainActivity.java" << EOF
+          cat > "$APP_JAVA_DIR/MainActivity.java" << 'EOF'
 package $APP_PACKAGE;
 import android.app.Activity;
 import android.os.Bundle;
@@ -386,8 +386,8 @@ public class MainActivity extends Activity {
 }
 EOF
 
-          # 生成AndroidManifest.xml（修正YAML语法）
-          cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
+          # 生成AndroidManifest.xml（修正YAML语法错误）
+          cat > "$APP_DIR/src/main/AndroidManifest.xml" << 'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="$APP_PACKAGE">
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
