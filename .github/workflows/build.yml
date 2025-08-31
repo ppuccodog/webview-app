@@ -482,7 +482,7 @@ EOF
           }
           EOF
 
-          # 7. 生成AndroidManifest.xml（关键：关联图标资源）
+                    # 7. 生成AndroidManifest.xml（关键：关联图标资源）
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -500,8 +500,7 @@ EOF
                   android:theme="@style/AppTheme"
                   android:hardwareAccelerated="true"
                   android:usesCleartextTraffic="true"
-                  <!-- 新增：关联图标资源（使用读取的48/72/96/144.png） -->
-                  android:icon="@mipmap/ic_launcher"
+                  android:icon="@mipmap/ic_launcher"  <!-- 修复：将注释移至行内正确位置 -->
                   android:roundIcon="@mipmap/ic_launcher">
                   
                   <!-- 主Activity配置 -->
