@@ -113,14 +113,6 @@ jobs:
           echo "APP_VERSION_NAME=$APP_VERSION_NAME" >> $GITHUB_ENV
           echo "APP_VERSION_CODE=$APP_VERSION_CODE" >> $GITHUB_ENV
 
-          # 打印配置
-          echo -e "\n📋 最终构建配置："
-          echo "目标网址：$CUSTOM_URL"
-          echo "应用包名：$APP_PACKAGE"
-          echo "应用名称：$APP_NAME"
-          echo "版本名称：$APP_VERSION_NAME"
-          echo "版本号：$APP_VERSION_CODE"
-
       - name: 构建安卓应用
         run: |
           # 加载环境变量
@@ -198,435 +190,435 @@ EOF
           mkdir -p "$APP_DIR/src/main/res/values" "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
 
           # 生成主布局文件
-          cat > "$APP_LAYOUT_DIR/activity_main.xml" << EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-              android:layout_width="match_parent"
-              android:layout_height="match_parent">
+          cat > "$APP_LAYOUT_DIR/activity_main.xml" << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
 
-              <WebView
-                  android:id="@+id/webview"
-                  android:layout_width="match_parent"
-                  android:layout_height="match_parent"/>
+    <WebView
+        android:id="@+id/webview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"/>
 
-              <LinearLayout
-                  android:id="@+id/loading_layout"
-                  android:layout_width="match_parent"
-                  android:layout_height="match_parent"
-                  android:gravity="center"
-                  android:orientation="vertical"
-                  android:background="@drawable/loading_bg_gradient">
+    <LinearLayout
+        android:id="@+id/loading_layout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:background="@drawable/loading_bg_gradient">
 
-                  <ProgressBar
-                      android:id="@+id/loading_progress"
-                      android:layout_width="60dp"
-                      android:layout_height="60dp"
-                      android:indeterminate="true"
-                      android:indeterminateDrawable="@drawable/loading_circle" />
+        <ProgressBar
+            android:id="@+id/loading_progress"
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:indeterminate="true"
+            android:indeterminateDrawable="@drawable/loading_circle" />
 
-                  <TextView
-                      android:layout_width="wrap_content"
-                      android:layout_height="wrap_content"
-                      android:layout_marginTop="20dp"
-                      android:text="加载中..."
-                      android:textSize="18sp"
-                      android:textColor="#333333"
-                      android:textStyle="bold" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="加载中..."
+            android:textSize="18sp"
+            android:textColor="#333333"
+            android:textStyle="bold" />
 
-              </LinearLayout>
-          </RelativeLayout>
-          EOF
+    </LinearLayout>
+</RelativeLayout>
+EOF
 
           # 生成渐变背景
-          cat > "$APP_DRAWABLE_DIR/loading_bg_gradient.xml" << EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <shape xmlns:android="http://schemas.android.com/apk/res/android"
-              android:shape="rectangle">
-              <gradient
-                  android:angle="90"
-                  android:centerColor="#F8F8F8"
-                  android:endColor="#FFFFFF"
-                  android:startColor="#F0F0F0"
-                  android:type="linear" />
-          </shape>
-          EOF
+          cat > "$APP_DRAWABLE_DIR/loading_bg_gradient.xml" << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="90"
+        android:centerColor="#F8F8F8"
+        android:endColor="#FFFFFF"
+        android:startColor="#F0F0F0"
+        android:type="linear" />
+</shape>
+EOF
 
           # 生成加载动画
-          cat > "$APP_DRAWABLE_DIR/loading_circle.xml" << EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <animated-rotate xmlns:android="http://schemas.android.com/apk/res/android"
-              android:duration="1200"
-              android:fromDegrees="0"
-              android:pivotX="50%"
-              android:pivotY="50%"
-              android:toDegrees="360">
+          cat > "$APP_DRAWABLE_DIR/loading_circle.xml" << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<animated-rotate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="1200"
+    android:fromDegrees="0"
+    android:pivotX="50%"
+    android:pivotY="50%"
+    android:toDegrees="360">
 
-              <shape
-                  android:innerRadius="20dp"
-                  android:shape="ring"
-                  android:thickness="6dp"
-                  android:useLevel="false">
+    <shape
+        android:innerRadius="20dp"
+        android:shape="ring"
+        android:thickness="6dp"
+        android:useLevel="false">
 
-                  <gradient
-                      android:centerColor="#40C4FF"
-                      android:endColor="#00BFA5"
-                      android:startColor="#2196F3"
-                      android:type="sweep" />
-              </shape>
-          </animated-rotate>
-          EOF
+        <gradient
+            android:centerColor="#40C4FF"
+            android:endColor="#00BFA5"
+            android:startColor="#2196F3"
+            android:type="sweep" />
+    </shape>
+</animated-rotate>
+EOF
 
           # 生成字符串资源
           cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">$APP_NAME</string>
-              <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
-          </resources>
-          EOF
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">$APP_NAME</string>
+    <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
+</resources>
+EOF
 
           # 生成WebView工具类
-          cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/WebViewHelper.java" << EOF
-          package org.apache.cordova;
-          import android.content.Context;
-          import android.os.Handler;
-          import android.view.View;
-          import android.webkit.SslErrorHandler;
-          import android.webkit.WebChromeClient;
-          import android.webkit.WebResourceRequest;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
-          import android.net.http.SslError;
-          import android.widget.LinearLayout;
-          import android.widget.Toast;
+          cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/WebViewHelper.java" << 'EOF'
+package org.apache.cordova;
+import android.content.Context;
+import android.os.Handler;
+import android.view.View;
+import android.webkit.SslErrorHandler;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.net.http.SslError;
+import android.widget.LinearLayout;
+import android.widget.Toast;
 
-          public class WebViewHelper {
-              private WebView webView;
-              private LinearLayout loadingLayout;
-              private Context context;
-              private static final int LOAD_TIMEOUT = 80000;
+public class WebViewHelper {
+    private WebView webView;
+    private LinearLayout loadingLayout;
+    private Context context;
+    private static final int LOAD_TIMEOUT = 80000;
 
-              public WebViewHelper(Context context, WebView webView, LinearLayout loadingLayout) {
-                  this.context = context;
-                  this.webView = webView;
-                  this.loadingLayout = loadingLayout;
-                  initWebViewSettings();
-              }
+    public WebViewHelper(Context context, WebView webView, LinearLayout loadingLayout) {
+        this.context = context;
+        this.webView = webView;
+        this.loadingLayout = loadingLayout;
+        initWebViewSettings();
+    }
 
-              private void initWebViewSettings() {
-                  WebSettings webSettings = webView.getSettings();
-                  webSettings.setJavaScriptEnabled(true);
-                  webSettings.setDomStorageEnabled(true);
-                  webSettings.setAllowFileAccess(true);
-                  webSettings.setAllowContentAccess(true);
-                  
-                  if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                      webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-                  }
-                  
-                  webSettings.setSupportZoom(true);
-                  webSettings.setBuiltInZoomControls(true);
-                  webSettings.setDisplayZoomControls(false);
-                  webSettings.setLoadWithOverviewMode(true);
-                  webSettings.setUseWideViewPort(true);
-                  
-                  webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.101 Mobile Safari/537.36");
-              }
+    private void initWebViewSettings() {
+        WebSettings webSettings = webView.getSettings();
+        webSettings.setJavaScriptEnabled(true);
+        webSettings.setDomStorageEnabled(true);
+        webSettings.setAllowFileAccess(true);
+        webSettings.setAllowContentAccess(true);
+        
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        }
+        
+        webSettings.setSupportZoom(true);
+        webSettings.setBuiltInZoomControls(true);
+        webSettings.setDisplayZoomControls(false);
+        webSettings.setLoadWithOverviewMode(true);
+        webSettings.setUseWideViewPort(true);
+        
+        webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.101 Mobile Safari/537.36");
+    }
 
-              public void setWebViewClient() {
-                  webView.setWebViewClient(new WebViewClient() {
-                      @Override
-                      public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                          super.onPageStarted(view, url, favicon);
-                          if (loadingLayout != null && loadingLayout.getVisibility() == View.GONE) {
-                              loadingLayout.setVisibility(View.VISIBLE);
-                          }
-                      }
-                      
-                      @Override
-                      public void onPageFinished(WebView view, String url) {
-                          super.onPageFinished(view, url);
-                          if (loadingLayout != null && loadingLayout.getVisibility() == View.VISIBLE) {
-                              loadingLayout.setVisibility(View.GONE);
-                          }
-                      }
-                      
-                      @Override
-                      public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                          view.loadUrl(request.getUrl().toString());
-                          return true;
-                      }
-                      
-                      @Override
-                      public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-                          handler.proceed();
-                      }
-                      
-                      @Override
-                      public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                          Toast.makeText(context, "资源加载失败: " + description, Toast.LENGTH_LONG).show();
-                          if (loadingLayout != null && loadingLayout.getVisibility() == View.VISIBLE) {
-                              loadingLayout.setVisibility(View.GONE);
-                          }
-                      }
-                  });
-                  
-                  webView.setWebChromeClient(new WebChromeClient());
-              }
+    public void setWebViewClient() {
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                if (loadingLayout != null && loadingLayout.getVisibility() == View.GONE) {
+                    loadingLayout.setVisibility(View.VISIBLE);
+                }
+            }
+            
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                if (loadingLayout != null && loadingLayout.getVisibility() == View.VISIBLE) {
+                    loadingLayout.setVisibility(View.GONE);
+                }
+            }
+            
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                view.loadUrl(request.getUrl().toString());
+                return true;
+            }
+            
+            @Override
+            public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
+                handler.proceed();
+            }
+            
+            @Override
+            public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                Toast.makeText(context, "资源加载失败: " + description, Toast.LENGTH_LONG).show();
+                if (loadingLayout != null && loadingLayout.getVisibility() == View.VISIBLE) {
+                    loadingLayout.setVisibility(View.GONE);
+                }
+            }
+        });
+        
+        webView.setWebChromeClient(new WebChromeClient());
+    }
 
-              public void loadUrl(String url) {
-                  webView.loadUrl(url);
-                  new Handler().postDelayed(() -> {
-                      if (webView.getProgress() < 100) {
-                          Toast.makeText(context, "加载超时，即将关闭", Toast.LENGTH_SHORT).show();
-                          ((android.app.Activity) context).finish();
-                      }
-                  }, LOAD_TIMEOUT);
-              }
+    public void loadUrl(String url) {
+        webView.loadUrl(url);
+        new Handler().postDelayed(() -> {
+            if (webView.getProgress() < 100) {
+                Toast.makeText(context, "加载超时，即将关闭", Toast.LENGTH_SHORT).show();
+                ((android.app.Activity) context).finish();
+            }
+        }, LOAD_TIMEOUT);
+    }
 
-              public WebView getWebView() {
-                  return webView;
-              }
-          }
-          EOF
+    public WebView getWebView() {
+        return webView;
+    }
+}
+EOF
 
           # 生成主Activity
           cat > "$APP_JAVA_DIR/MainActivity.java" << EOF
-          package $APP_PACKAGE;
-          import android.app.Activity;
-          import android.os.Bundle;
-          import android.webkit.WebView;
-          import android.widget.LinearLayout;
-          import org.apache.cordova.WebViewHelper;
-          import $APP_PACKAGE.R;
+package $APP_PACKAGE;
+import android.app.Activity;
+import android.os.Bundle;
+import android.webkit.WebView;
+import android.widget.LinearLayout;
+import org.apache.cordova.WebViewHelper;
+import $APP_PACKAGE.R;
 
-          public class MainActivity extends Activity {
-              private WebViewHelper webViewHelper;
+public class MainActivity extends Activity {
+    private WebViewHelper webViewHelper;
 
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  setContentView(R.layout.activity_main);
-                  
-                  WebView webView = findViewById(R.id.webview);
-                  LinearLayout loadingLayout = findViewById(R.id.loading_layout);
-                  
-                  webViewHelper = new WebViewHelper(this, webView, loadingLayout);
-                  webViewHelper.setWebViewClient();
-                  webViewHelper.loadUrl("$CUSTOM_URL");
-              }
-              
-              @Override
-              public void onBackPressed() {
-                  if (webViewHelper != null && webViewHelper.getWebView().canGoBack()) {
-                      webViewHelper.getWebView().goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
-              }
-              
-              @Override
-              protected void onPause() {
-                  super.onPause();
-                  if (webViewHelper != null) {
-                      webViewHelper.getWebView().onPause();
-                  }
-              }
-              
-              @Override
-              protected void onResume() {
-                  super.onResume();
-                  if (webViewHelper != null) {
-                      webViewHelper.getWebView().onResume();
-                  }
-              }
-              
-              @Override
-              protected void onDestroy() {
-                  if (webViewHelper != null) {
-                      webViewHelper.getWebView().destroy();
-                  }
-                  super.onDestroy();
-              }
-          }
-          EOF
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        
+        WebView webView = findViewById(R.id.webview);
+        LinearLayout loadingLayout = findViewById(R.id.loading_layout);
+        
+        webViewHelper = new WebViewHelper(this, webView, loadingLayout);
+        webViewHelper.setWebViewClient();
+        webViewHelper.loadUrl("$CUSTOM_URL");
+    }
+    
+    @Override
+    public void onBackPressed() {
+        if (webViewHelper != null && webViewHelper.getWebView().canGoBack()) {
+            webViewHelper.getWebView().goBack();
+        } else {
+            super.onBackPressed();
+        }
+    }
+    
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (webViewHelper != null) {
+            webViewHelper.getWebView().onPause();
+        }
+    }
+    
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webViewHelper != null) {
+            webViewHelper.getWebView().onResume();
+        }
+    }
+    
+    @Override
+    protected void onDestroy() {
+        if (webViewHelper != null) {
+            webViewHelper.getWebView().destroy();
+        }
+        super.onDestroy();
+    }
+}
+EOF
 
-          # 生成AndroidManifest.xml（已修复注释位置）
-          cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-                    package="$APP_PACKAGE">
-              <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
-              
-              <uses-permission android:name="android.permission.INTERNET"/>
-              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
-              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
-              
-              <application
-                  android:label="$APP_NAME"
-                  android:theme="@style/AppTheme"
-                  android:hardwareAccelerated="true"
-                  android:usesCleartextTraffic="true"
-                  android:icon="@mipmap/ic_launcher"
-                  android:roundIcon="@mipmap/ic_launcher">
-                  
-                  <activity 
-                      android:name=".MainActivity"
-                      android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"
-                      android:launchMode="singleTask"
-                      android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
-                      </intent-filter>
-                      <intent-filter>
-                          <action android:name="android.intent.action.VIEW"/>
-                          <category android:name="android.intent.category.DEFAULT"/>
-                          <category android:name="android.intent.category.BROWSABLE"/>
-                          <data android:scheme="http"/>
-                          <data android:scheme="https"/>
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF
+          # 生成AndroidManifest.xml（已修复YAML语法）
+          cat > "$APP_DIR/src/main/AndroidManifest.xml" << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          package="$APP_PACKAGE">
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
+    
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    
+    <application
+        android:label="$APP_NAME"
+        android:theme="@style/AppTheme"
+        android:hardwareAccelerated="true"
+        android:usesCleartextTraffic="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher">
+        
+        <activity 
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"
+            android:launchMode="singleTask"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="http"/>
+                <data android:scheme="https"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+EOF
 
           # 生成gradle.properties
-          cat > "$ANDROID_ROOT/gradle.properties" << EOF
-          android.useAndroidX=true
-          android.enableJetifier=false
-          org.gradle.jvmargs=-Xmx1536m
-          org.gradle.parallel=true
-          org.gradle.caching=true
-          EOF
+          cat > "$ANDROID_ROOT/gradle.properties" << 'EOF'
+android.useAndroidX=true
+android.enableJetifier=false
+org.gradle.jvmargs=-Xmx1536m
+org.gradle.parallel=true
+org.gradle.caching=true
+EOF
 
           # 生成settings.gradle
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
-          include ':app', ':CordovaLib'
-          rootProject.name = '$APP_NAME'
-          EOF
+include ':app', ':CordovaLib'
+rootProject.name = '$APP_NAME'
+EOF
 
           # 生成CordovaLib/build.gradle
-          cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
-          buildscript {
-              repositories {
-                  maven { url 'https://maven.aliyun.com/repository/google' }
-                  maven { url 'https://maven.aliyun.com/repository/public' }
-                  mavenCentral()
-              }
-              dependencies {
-                  classpath 'com.android.tools.build:gradle:7.0.4'
-              }
-          }
-          apply plugin: 'com.android.library'
-          
-          android {
-              compileSdk 30
-              namespace 'org.apache.cordova'
-              
-              repositories {
-                  maven { url 'https://maven.aliyun.com/repository/google' }
-                  maven { url 'https://maven.aliyun.com/repository/public' }
-              }
-              
-              lintOptions {
-                  abortOnError false
-                  disable 'UnusedResources'
-              }
-          }
-          
-          dependencies {
-              implementation 'androidx.appcompat:appcompat:1.0.2'
-          }
-          EOF
+          cat > "$CORDOVA_LIB_DIR/build.gradle" << 'EOF'
+buildscript {
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:7.0.4'
+    }
+}
+apply plugin: 'com.android.library'
+
+android {
+    compileSdk 30
+    namespace 'org.apache.cordova'
+    
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+    }
+    
+    lintOptions {
+        abortOnError false
+        disable 'UnusedResources'
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.0.2'
+}
+EOF
 
           # 生成app/build.gradle
           cat > "$APP_DIR/build.gradle" << EOF
-          buildscript {
-              repositories {
-                  maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
-                  maven { url 'https://maven.aliyun.com/repository/google' }
-              }
-              dependencies {
-                  classpath 'com.android.tools.build:gradle:7.0.4'
-              }
-          }
-          apply plugin: 'com.android.application'
-          
-          android {
-              compileSdk 30
-              namespace '$APP_PACKAGE'
-              
-              defaultConfig {
-                  applicationId "$APP_PACKAGE"
-                  minSdk 21
-                  targetSdk 30
-                  versionCode $APP_VERSION_CODE
-                  versionName "$APP_VERSION_NAME"
-              }
-              
-              buildTypes {
-                  release {
-                      minifyEnabled false
-                      signingConfig signingConfigs.debug
-                      proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-                  }
-              }
-              
-              lintOptions {
-                  abortOnError false
-              }
-              
-              repositories {
-                  maven { url 'https://maven.aliyun.com/repository/google' }
-                  maven { url 'https://maven.aliyun.com/repository/public' }
-              }
-              
-              sourceSets {
-                  main {
-                      res.srcDirs = [
-                          'src/main/res',
-                          'src/main/res/mipmap-mdpi',
-                          'src/main/res/mipmap-hdpi',
-                          'src/main/res/mipmap-xhdpi',
-                          'src/main/res/mipmap-xxhdpi'
-                      ]
-                  }
-              }
-          }
-          
-          dependencies {
-              implementation project(':CordovaLib')
-              implementation 'androidx.appcompat:appcompat:1.0.2'
-          }
-          EOF
+buildscript {
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        maven { url 'https://maven.aliyun.com/repository/google' }
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:7.0.4'
+    }
+}
+apply plugin: 'com.android.application'
+
+android {
+    compileSdk 30
+    namespace '$APP_PACKAGE'
+    
+    defaultConfig {
+        applicationId "$APP_PACKAGE"
+        minSdk 21
+        targetSdk 30
+        versionCode $APP_VERSION_CODE
+        versionName "$APP_VERSION_NAME"
+    }
+    
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    
+    lintOptions {
+        abortOnError false
+    }
+    
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+    }
+    
+    sourceSets {
+        main {
+            res.srcDirs = [
+                'src/main/res',
+                'src/main/res/mipmap-mdpi',
+                'src/main/res/mipmap-hdpi',
+                'src/main/res/mipmap-xhdpi',
+                'src/main/res/mipmap-xxhdpi'
+            ]
+        }
+    }
+}
+
+dependencies {
+    implementation project(':CordovaLib')
+    implementation 'androidx.appcompat:appcompat:1.0.2'
+}
+EOF
 
           # 生成混淆规则
           cat > "$APP_DIR/proguard-rules.pro" << EOF
-          -keepclassmembers class * extends android.webkit.WebViewClient {
-              public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
-              public boolean *(android.webkit.WebView, java.lang.String);
-          }
-          -keepclassmembers class * extends android.webkit.WebChromeClient {
-              public void *(android.webkit.WebView, java.lang.String);
-          }
-          
-          -keep class $APP_PACKAGE.R { *; }
-          -keep class $APP_PACKAGE.R$layout { *; }
-          -keep class $APP_PACKAGE.R$id { *; }
-          -keep class $APP_PACKAGE.R$string { *; }
-          -keep class $APP_PACKAGE.R$mipmap { *; }
-          -keep class $APP_PACKAGE.R$drawable { *; }
-          
-          -keep class org.apache.cordova.WebViewHelper { *; }
-          -keepclassmembers class org.apache.cordova.WebViewHelper {
-              public <init>(android.content.Context, android.webkit.WebView, android.widget.LinearLayout);
-              public void setWebViewClient();
-              public void loadUrl(java.lang.String);
-              public android.webkit.WebView getWebView();
-          }
-          EOF
+-keepclassmembers class * extends android.webkit.WebViewClient {
+    public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
+    public boolean *(android.webkit.WebView, java.lang.String);
+}
+-keepclassmembers class * extends android.webkit.WebChromeClient {
+    public void *(android.webkit.WebView, java.lang.String);
+}
+
+-keep class $APP_PACKAGE.R { *; }
+-keep class $APP_PACKAGE.R$layout { *; }
+-keep class $APP_PACKAGE.R$id { *; }
+-keep class $APP_PACKAGE.R$string { *; }
+-keep class $APP_PACKAGE.R$mipmap { *; }
+-keep class $APP_PACKAGE.R$drawable { *; }
+
+-keep class org.apache.cordova.WebViewHelper { *; }
+-keepclassmembers class org.apache.cordova.WebViewHelper {
+    public <init>(android.content.Context, android.webkit.WebView, android.widget.LinearLayout);
+    public void setWebViewClient();
+    public void loadUrl(java.lang.String);
+    public android.webkit.WebView getWebView();
+}
+EOF
 
           # 编译APK
           echo "=== 开始编译Release版本APK ==="
