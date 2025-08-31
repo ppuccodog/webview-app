@@ -1,4 +1,4 @@
-name: 安卓浏览器式套壳应用构建+自动发版
+name: 安卓套壳应用构建+自动发版
 on:
   workflow_dispatch:
 permissions:
@@ -18,7 +18,7 @@ jobs:
         run: |
           export TIMEOUT=300
           
-          # 替换为阿里云Ubuntu镜像源（解决卡包问题）
+          # 替换为阿里云Ubuntu镜像源
           sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
           sudo tee /etc/apt/sources.list > /dev/null << EOF
           deb http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse
@@ -38,7 +38,7 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_SDK_PATH" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 下载SDK Tools（优先阿里云镜像）
+          # 下载SDK Tools
           SDK_TOOLS_URL="https://mirrors.aliyun.com/android/repository/commandlinetools-linux-9477386_latest.zip"
           if ! wget --timeout=$TIMEOUT --tries=3 "$SDK_TOOLS_URL" -O sdk-tools.zip; then
             SDK_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip"
@@ -49,7 +49,7 @@ jobs:
           mv "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools/"* "$ANDROID_SDK_PATH/cmdline-tools/latest/" 2>/dev/null || true
           rm -rf "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools"
 
-          # 接受SDK许可证+安装必要组件（API 30+构建工具）
+          # 接受SDK许可证+安装组件
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/latest/bin/sdkmanager"
           chmod +x "$SDK_MANAGER"
           yes | "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" --licenses || true
@@ -57,7 +57,7 @@ jobs:
             "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https || exit 1
           fi
 
-          # 安装Gradle 7.0.2（适配Android Gradle Plugin 7.0.4）
+          # 安装Gradle 7.0.2
           GRADLE_PATH="$HOME/gradle-7.0.2"
           if [ ! -d "$GRADLE_PATH" ]; then
             GRADLE_URL="https://mirrors.aliyun.com/gradle/gradle-7.0.2-bin.zip"
@@ -70,16 +70,16 @@ jobs:
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
 
-      - name: 读取 config.txt 配置（网址/包名/应用名/版本号）
+      - name: 读取配置文件
         run: |
-          # 定义默认配置（防止config.txt缺失时构建失败）
+          # 默认配置
           DEFAULT_CUSTOM_URL="https://www.baidu.com"
           DEFAULT_APP_PACKAGE="com.my.browserapp"
           DEFAULT_APP_NAME="自定义浏览器"
           DEFAULT_APP_VERSION_NAME="1.0.0"
           DEFAULT_APP_VERSION_CODE="1"
 
-          # 读取config.txt配置（格式：键=值，每行一个配置）
+          # 读取配置
           if [ -f "config.txt" ]; then
             echo "✅ 读取 config.txt 配置..."
             CUSTOM_URL=$(grep -E "^CUSTOM_URL=" config.txt | cut -d'=' -f2- | sed 's/^[ \t]*//;s/[ \t]*$//' || echo "$DEFAULT_CUSTOM_URL")
@@ -96,9 +96,9 @@ jobs:
             APP_VERSION_CODE="$DEFAULT_APP_VERSION_CODE"
           fi
 
-          # 验证配置有效性（包名格式/版本号类型）
+          # 验证配置
           if ! echo "$APP_PACKAGE" | grep -qE '^[a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_]+$'; then
-            echo "⚠️ 包名格式无效（需符合xxx.xxx.xxx），使用默认包名：$DEFAULT_APP_PACKAGE"
+            echo "⚠️ 包名格式无效，使用默认包名：$DEFAULT_APP_PACKAGE"
             APP_PACKAGE="$DEFAULT_APP_PACKAGE"
           fi
           if ! echo "$APP_VERSION_CODE" | grep -qE '^[0-9]+$'; then
@@ -106,22 +106,22 @@ jobs:
             APP_VERSION_CODE="$DEFAULT_APP_VERSION_CODE"
           fi
 
-          # 将配置写入环境变量（供后续步骤调用）
+          # 写入环境变量
           echo "CUSTOM_URL=$CUSTOM_URL" >> $GITHUB_ENV
           echo "APP_PACKAGE=$APP_PACKAGE" >> $GITHUB_ENV
           echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
           echo "APP_VERSION_NAME=$APP_VERSION_NAME" >> $GITHUB_ENV
           echo "APP_VERSION_CODE=$APP_VERSION_CODE" >> $GITHUB_ENV
 
-          # 打印最终配置（便于日志调试）
+          # 打印配置
           echo -e "\n📋 最终构建配置："
           echo "目标网址：$CUSTOM_URL"
           echo "应用包名：$APP_PACKAGE"
           echo "应用名称：$APP_NAME"
           echo "版本名称：$APP_VERSION_NAME"
-          echo "版本号（整数）：$APP_VERSION_CODE"
+          echo "版本号：$APP_VERSION_CODE"
 
-      - name: 构建安卓套壳应用（含自定义图标配置）
+      - name: 构建安卓应用
         run: |
           # 加载环境变量
           export JAVA_HOME="${{ env.JDK11_PATH }}"
@@ -136,30 +136,27 @@ jobs:
           APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
           APP_VERSION_CODE="${{ env.APP_VERSION_CODE }}"
 
-          # 动态创建项目目录（按包名生成Java目录结构）
+          # 创建项目目录
           PROJECT_PATH="/home/runner/work/webview-app/webview-app/myapp"
           ANDROID_ROOT="$PROJECT_PATH/android-project"
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
-          APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"  # 按包名拆分目录
-          APP_LAYOUT_DIR="$APP_DIR/src/main/res/layout"  # 布局资源目录
-          APP_DRAWABLE_DIR="$APP_DIR/src/main/res/drawable"  # 图片/动画资源目录
+          APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"
+          APP_LAYOUT_DIR="$APP_DIR/src/main/res/layout"
+          APP_DRAWABLE_DIR="$APP_DIR/src/main/res/drawable"
           
-          # -------------------------- 新增：创建图标资源目录 --------------------------
-          # 安卓多分辨率图标目录（对应48/72/96/144.png）
+          # 图标目录配置
           APP_ICON_DIRS=(
-            "$APP_DIR/src/main/res/mipmap-mdpi"   # 48.png -> mdpi
-            "$APP_DIR/src/main/res/mipmap-hdpi"   # 72.png -> hdpi
-            "$APP_DIR/src/main/res/mipmap-xhdpi"  # 96.png -> xhdpi
-            "$APP_DIR/src/main/res/mipmap-xxhdpi" # 144.png -> xxhdpi
+            "$APP_DIR/src/main/res/mipmap-mdpi"
+            "$APP_DIR/src/main/res/mipmap-hdpi"
+            "$APP_DIR/src/main/res/mipmap-xhdpi"
+            "$APP_DIR/src/main/res/mipmap-xxhdpi"
           )
-          # 创建图标目录
           for dir in "${APP_ICON_DIRS[@]}"; do
             mkdir -p "$dir"
           done
           
-          # -------------------------- 新增：读取项目根目录icon文件夹图标 --------------------------
-          # 图标映射关系（项目根目录icon文件 -> 安卓图标目录）
+          # 图标复制逻辑
           declare -A ICON_MAPPING=(
             ["icon/48.png"]="$APP_DIR/src/main/res/mipmap-mdpi/ic_launcher.png"
             ["icon/72.png"]="$APP_DIR/src/main/res/mipmap-hdpi/ic_launcher.png"
@@ -167,7 +164,6 @@ jobs:
             ["icon/144.png"]="$APP_DIR/src/main/res/mipmap-xxhdpi/ic_launcher.png"
           )
           
-          # 复制图标（若项目根目录icon文件夹存在对应文件）
           MISSING_ICON=0
           for src in "${!ICON_MAPPING[@]}"; do
             dest="${ICON_MAPPING[$src]}"
@@ -180,7 +176,7 @@ jobs:
             fi
           done
           
-          # 若部分图标缺失，生成默认蓝色圆形图标（避免编译失败）
+          # 生成默认图标
           if [ $MISSING_ICON -eq 1 ]; then
             echo "ℹ️ 生成默认图标补充缺失资源..."
             for dest in "${ICON_MAPPING[@]}"; do
@@ -188,34 +184,31 @@ jobs:
                 cat > "$dest" << 'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <solid android:color="#2196F3"/> <!-- 默认蓝色 -->
+    <solid android:color="#2196F3"/>
 </shape>
 EOF
                 echo "✅ 生成默认图标：$dest"
               fi
             done
           fi
-          # --------------------------------------------------------------------------
 
-          # 清理旧项目残留并创建其他必要目录
+          # 清理旧项目并创建目录
           rm -rf "$PROJECT_PATH"
           mkdir -p "$APP_JAVA_DIR" "$APP_LAYOUT_DIR" "$APP_DRAWABLE_DIR"
           mkdir -p "$APP_DIR/src/main/res/values" "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova"
 
-          # 1. 生成主布局文件（WebView+加载动画）
+          # 生成主布局文件
           cat > "$APP_LAYOUT_DIR/activity_main.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
               android:layout_height="match_parent">
 
-              <!-- WebView：核心控件，加载目标网页 -->
               <WebView
                   android:id="@+id/webview"
                   android:layout_width="match_parent"
                   android:layout_height="match_parent"/>
 
-              <!-- 加载动画容器：渐变背景+居中布局 -->
               <LinearLayout
                   android:id="@+id/loading_layout"
                   android:layout_width="match_parent"
@@ -224,7 +217,6 @@ EOF
                   android:orientation="vertical"
                   android:background="@drawable/loading_bg_gradient">
 
-                  <!-- 自定义圆形旋转进度条 -->
                   <ProgressBar
                       android:id="@+id/loading_progress"
                       android:layout_width="60dp"
@@ -232,7 +224,6 @@ EOF
                       android:indeterminate="true"
                       android:indeterminateDrawable="@drawable/loading_circle" />
 
-                  <!-- 加载文字：加粗+大字号 -->
                   <TextView
                       android:layout_width="wrap_content"
                       android:layout_height="wrap_content"
@@ -246,7 +237,7 @@ EOF
           </RelativeLayout>
           EOF
 
-          # 2. 生成加载动画渐变背景（XML格式，无需图片）
+          # 生成渐变背景
           cat > "$APP_DRAWABLE_DIR/loading_bg_gradient.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -260,7 +251,7 @@ EOF
           </shape>
           EOF
 
-          # 3. 生成自定义圆形加载动画（渐变色彩+旋转效果）
+          # 生成加载动画
           cat > "$APP_DRAWABLE_DIR/loading_circle.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <animated-rotate xmlns:android="http://schemas.android.com/apk/res/android"
@@ -285,7 +276,7 @@ EOF
           </animated-rotate>
           EOF
 
-          # 4. 生成字符串资源文件（应用名称+主题）
+          # 生成字符串资源
           cat > "$APP_DIR/src/main/res/values/strings.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
@@ -293,7 +284,8 @@ EOF
               <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
           </resources>
           EOF
-          # 5. 生成CordovaLib模块：WebView工具类（封装核心逻辑）
+
+          # 生成WebView工具类
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/WebViewHelper.java" << EOF
           package org.apache.cordova;
           import android.content.Context;
@@ -309,50 +301,41 @@ EOF
           import android.widget.LinearLayout;
           import android.widget.Toast;
 
-          // 通用WebView工具类：接收外部传入的WebView和加载布局，消除资源依赖
           public class WebViewHelper {
               private WebView webView;
               private LinearLayout loadingLayout;
               private Context context;
-              private static final int LOAD_TIMEOUT = 80000;  // 80秒加载超时
+              private static final int LOAD_TIMEOUT = 80000;
 
-              // 构造方法：从外部注入依赖（Context/WebView/加载布局）
               public WebViewHelper(Context context, WebView webView, LinearLayout loadingLayout) {
                   this.context = context;
                   this.webView = webView;
                   this.loadingLayout = loadingLayout;
-                  initWebViewSettings();  // 初始化WebView配置
+                  initWebViewSettings();
               }
 
-              // 初始化WebView基础配置（JS支持/混合内容/缩放等）
               private void initWebViewSettings() {
                   WebSettings webSettings = webView.getSettings();
-                  webSettings.setJavaScriptEnabled(true);  // 启用JS
-                  webSettings.setDomStorageEnabled(true);  // 启用DOM存储
-                  webSettings.setAllowFileAccess(true);  // 允许文件访问
-                  webSettings.setAllowContentAccess(true);  // 允许内容访问
+                  webSettings.setJavaScriptEnabled(true);
+                  webSettings.setDomStorageEnabled(true);
+                  webSettings.setAllowFileAccess(true);
+                  webSettings.setAllowContentAccess(true);
                   
-                  // 适配Android 5.0+ HTTPS/HTTP混合内容
                   if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                       webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                   }
                   
-                  // 缩放配置（支持缩放+隐藏缩放控件）
                   webSettings.setSupportZoom(true);
                   webSettings.setBuiltInZoomControls(true);
                   webSettings.setDisplayZoomControls(false);
-                  // 屏幕适配（自适应屏幕宽度）
                   webSettings.setLoadWithOverviewMode(true);
                   webSettings.setUseWideViewPort(true);
                   
-                  // 自定义UA（模拟手机Chrome浏览器）
                   webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.101 Mobile Safari/537.36");
               }
 
-              // 设置WebViewClient（控制页面加载状态+错误处理）
               public void setWebViewClient() {
                   webView.setWebViewClient(new WebViewClient() {
-                      // 页面开始加载：显示加载动画
                       @Override
                       public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                           super.onPageStarted(view, url, favicon);
@@ -361,7 +344,6 @@ EOF
                           }
                       }
                       
-                      // 页面加载完成：隐藏加载动画
                       @Override
                       public void onPageFinished(WebView view, String url) {
                           super.onPageFinished(view, url);
@@ -370,20 +352,17 @@ EOF
                           }
                       }
                       
-                      // 链接跳转处理（内部打开）
                       @Override
                       public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                           view.loadUrl(request.getUrl().toString());
                           return true;
                       }
                       
-                      // SSL证书错误处理（测试用，生产环境需谨慎）
                       @Override
                       public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
                           handler.proceed();
                       }
                       
-                      // 加载错误提示
                       @Override
                       public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
                           Toast.makeText(context, "资源加载失败: " + description, Toast.LENGTH_LONG).show();
@@ -393,14 +372,11 @@ EOF
                       }
                   });
                   
-                  // 启用WebChromeClient（支持JS弹窗）
                   webView.setWebChromeClient(new WebChromeClient());
               }
 
-              // 加载目标网址
               public void loadUrl(String url) {
                   webView.loadUrl(url);
-                  // 加载超时处理（超时关闭页面）
                   new Handler().postDelayed(() -> {
                       if (webView.getProgress() < 100) {
                           Toast.makeText(context, "加载超时，即将关闭", Toast.LENGTH_SHORT).show();
@@ -409,14 +385,13 @@ EOF
                   }, LOAD_TIMEOUT);
               }
 
-              // 获取WebView实例（供外部调用后退等方法）
               public WebView getWebView() {
                   return webView;
               }
           }
           EOF
 
-          # 6. 生成app模块：主Activity（应用入口）
+          # 生成主Activity
           cat > "$APP_JAVA_DIR/MainActivity.java" << EOF
           package $APP_PACKAGE;
           import android.app.Activity;
@@ -424,28 +399,24 @@ EOF
           import android.webkit.WebView;
           import android.widget.LinearLayout;
           import org.apache.cordova.WebViewHelper;
-          import $APP_PACKAGE.R;  // 引用app模块资源
+          import $APP_PACKAGE.R;
 
           public class MainActivity extends Activity {
-              private WebViewHelper webViewHelper;  // WebView工具类实例
+              private WebViewHelper webViewHelper;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  // 加载布局资源（含WebView和加载动画）
                   setContentView(R.layout.activity_main);
                   
-                  // 从布局中获取控件
                   WebView webView = findViewById(R.id.webview);
                   LinearLayout loadingLayout = findViewById(R.id.loading_layout);
                   
-                  // 初始化WebView工具类并加载目标网址
                   webViewHelper = new WebViewHelper(this, webView, loadingLayout);
                   webViewHelper.setWebViewClient();
                   webViewHelper.loadUrl("$CUSTOM_URL");
               }
               
-              // 返回键逻辑（优先后退网页，无历史则退出）
               @Override
               public void onBackPressed() {
                   if (webViewHelper != null && webViewHelper.getWebView().canGoBack()) {
@@ -455,7 +426,6 @@ EOF
                   }
               }
               
-              // 页面生命周期处理（避免WebView内存泄漏）
               @Override
               protected void onPause() {
                   super.onPause();
@@ -482,15 +452,13 @@ EOF
           }
           EOF
 
-                    # 7. 生成AndroidManifest.xml（关键：关联图标资源）
+          # 生成AndroidManifest.xml（已修复注释位置）
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
                     package="$APP_PACKAGE">
-              <!-- 配置支持的SDK版本 -->
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30"/>
               
-              <!-- 申请必要权限 -->
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
@@ -500,21 +468,18 @@ EOF
                   android:theme="@style/AppTheme"
                   android:hardwareAccelerated="true"
                   android:usesCleartextTraffic="true"
-                  android:icon="@mipmap/ic_launcher"  <!-- 修复：将注释移至行内正确位置 -->
+                  android:icon="@mipmap/ic_launcher"
                   android:roundIcon="@mipmap/ic_launcher">
                   
-                  <!-- 主Activity配置 -->
                   <activity 
                       android:name=".MainActivity"
                       android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"
                       android:launchMode="singleTask"
-                      android:exported="true">  <!-- 适配Android 12+启动要求 -->
-                      <!-- 配置为启动页 -->
+                      android:exported="true">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
-                      <!-- 支持HTTP/HTTPS链接跳转 -->
                       <intent-filter>
                           <action android:name="android.intent.action.VIEW"/>
                           <category android:name="android.intent.category.DEFAULT"/>
@@ -527,29 +492,22 @@ EOF
           </manifest>
           EOF
 
-          # 8. 生成Gradle全局配置（优化构建效率）
+          # 生成gradle.properties
           cat > "$ANDROID_ROOT/gradle.properties" << EOF
-          # 启用AndroidX支持
           android.useAndroidX=true
-          # 关闭Jetifier（避免依赖冲突）
           android.enableJetifier=false
-          
-          # 配置Gradle内存（避免OOM）
           org.gradle.jvmargs=-Xmx1536m
-          
-          # 启用并行构建+构建缓存（加速编译）
           org.gradle.parallel=true
           org.gradle.caching=true
           EOF
 
-          # 9. 生成模块依赖配置（关联app与CordovaLib）
+          # 生成settings.gradle
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
           include ':app', ':CordovaLib'
-          # 配置项目名称（与应用名称一致）
           rootProject.name = '$APP_NAME'
           EOF
 
-          # 10. 生成CordovaLib库模块配置（图标不依赖此模块，仅基础依赖）
+          # 生成CordovaLib/build.gradle
           cat > "$CORDOVA_LIB_DIR/build.gradle" << EOF
           buildscript {
               repositories {
@@ -565,7 +523,7 @@ EOF
           
           android {
               compileSdk 30
-              namespace 'org.apache.cordova'  // 明确命名空间
+              namespace 'org.apache.cordova'
               
               repositories {
                   maven { url 'https://maven.aliyun.com/repository/google' }
@@ -573,17 +531,17 @@ EOF
               }
               
               lintOptions {
-                  abortOnError false  // 忽略lint警告，避免构建中断
+                  abortOnError false
                   disable 'UnusedResources'
               }
           }
           
           dependencies {
-              implementation 'androidx.appcompat:appcompat:1.0.2'  // 基础兼容库
+              implementation 'androidx.appcompat:appcompat:1.0.2'
           }
           EOF
 
-          # 11. 生成app模块配置（确保图标资源被正确打包）
+          # 生成app/build.gradle
           cat > "$APP_DIR/build.gradle" << EOF
           buildscript {
               repositories {
@@ -598,11 +556,11 @@ EOF
           
           android {
               compileSdk 30
-              namespace '$APP_PACKAGE'  // 与应用包名一致
+              namespace '$APP_PACKAGE'
               
               defaultConfig {
                   applicationId "$APP_PACKAGE"
-                  minSdk 21  // 支持Android 5.0+
+                  minSdk 21
                   targetSdk 30
                   versionCode $APP_VERSION_CODE
                   versionName "$APP_VERSION_NAME"
@@ -610,14 +568,14 @@ EOF
               
               buildTypes {
                   release {
-                      minifyEnabled false  // 关闭混淆（简化测试，生产可开启）
-                      signingConfig signingConfigs.debug  // 测试用debug签名
+                      minifyEnabled false
+                      signingConfig signingConfigs.debug
                       proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
                   }
               }
               
               lintOptions {
-                  abortOnError false  // 忽略lint警告
+                  abortOnError false
               }
               
               repositories {
@@ -625,7 +583,6 @@ EOF
                   maven { url 'https://maven.aliyun.com/repository/public' }
               }
               
-              // 新增：确保图标资源被正确识别（mipmap目录默认打包，无需额外配置）
               sourceSets {
                   main {
                       res.srcDirs = [
@@ -640,13 +597,13 @@ EOF
           }
           
           dependencies {
-              implementation project(':CordovaLib')  // 依赖CordovaLib工具类
-              implementation 'androidx.appcompat:appcompat:1.0.2'  // 基础兼容库
+              implementation project(':CordovaLib')
+              implementation 'androidx.appcompat:appcompat:1.0.2'
           }
           EOF
-          # 12. 生成混淆规则（保护核心类不被混淆）
+
+          # 生成混淆规则
           cat > "$APP_DIR/proguard-rules.pro" << EOF
-          # 保护WebView相关类（避免功能异常）
           -keepclassmembers class * extends android.webkit.WebViewClient {
               public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
               public boolean *(android.webkit.WebView, java.lang.String);
@@ -655,15 +612,13 @@ EOF
               public void *(android.webkit.WebView, java.lang.String);
           }
           
-          # 保护应用资源类（避免图标等资源引用失败）
           -keep class $APP_PACKAGE.R { *; }
           -keep class $APP_PACKAGE.R$layout { *; }
           -keep class $APP_PACKAGE.R$id { *; }
           -keep class $APP_PACKAGE.R$string { *; }
-          -keep class $APP_PACKAGE.R$mipmap { *; }  # 新增：保护图标资源类
+          -keep class $APP_PACKAGE.R$mipmap { *; }
           -keep class $APP_PACKAGE.R$drawable { *; }
           
-          # 保护CordovaLib工具类
           -keep class org.apache.cordova.WebViewHelper { *; }
           -keepclassmembers class org.apache.cordova.WebViewHelper {
               public <init>(android.content.Context, android.webkit.WebView, android.widget.LinearLayout);
@@ -673,59 +628,53 @@ EOF
           }
           EOF
 
-          # 编译Release版本APK（包含图标资源）
+          # 编译APK
           echo "=== 开始编译Release版本APK ==="
           cd "$ANDROID_ROOT" || exit 1
           
-          # 生成Gradle wrapper（确保版本一致）
           gradle wrapper --gradle-version 7.0.2
           chmod +x gradlew
-          
-          # 执行清理+编译（输出详细日志便于调试）
           ./gradlew clean :app:assembleRelease --stacktrace --info
           
-          # 检查并复制APK（包含图标资源的最终产物）
+          # 复制APK
           APK_SOURCE_SIGNED="$APP_DIR/build/outputs/apk/release/app-release.apk"
           APK_SOURCE_UNSIGNED="$APP_DIR/build/outputs/apk/release/app-release-unsigned.apk"
           APK_DEST="/home/runner/work/webview-app/webview-app/${APP_NAME}-v${APP_VERSION_NAME}.apk"
           
           if [ -f "$APK_SOURCE_SIGNED" ]; then
             cp "$APK_SOURCE_SIGNED" "$APK_DEST"
-            echo "✅ 已复制已签名APK（含图标）：$APK_DEST"
+            echo "✅ 已复制已签名APK：$APK_DEST"
           elif [ -f "$APK_SOURCE_UNSIGNED" ]; then
             cp "$APK_SOURCE_UNSIGNED" "$APK_DEST"
-            echo "✅ 已复制未签名APK（含图标）：$APK_DEST"
+            echo "✅ 已复制未签名APK：$APK_DEST"
           else
-            echo "❌ 未找到APK文件，构建失败"
-            ls -R "$APP_DIR/build/outputs"  # 输出目录结构便于排查
+            echo "❌ 未找到APK文件"
+            ls -R "$APP_DIR/build/outputs"
             exit 1
           fi
 
-      - name: 创建并推送Git Tag（版本标记）
+      - name: 创建并推送Git Tag
         run: |
           APP_VERSION_NAME="${{ env.APP_VERSION_NAME }}"
           TAG_NAME="v$APP_VERSION_NAME"
           
-          # 配置Git身份
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
-          # 处理已有同名Tag（删除旧Tag避免冲突）
           if git rev-parse --verify --quiet "$TAG_NAME"; then
             echo "⚠️ 删除旧Tag $TAG_NAME"
             git tag -d "$TAG_NAME"
             git push origin --delete "$TAG_NAME" 2>/dev/null || true
           fi
           
-          # 创建并推送新Tag
-          git tag -a "$TAG_NAME" -m "${{ env.APP_NAME }} v$APP_VERSION_NAME（含自定义图标）"
+          git tag -a "$TAG_NAME" -m "${{ env.APP_NAME }} v$APP_VERSION_NAME"
           if ! git push origin "$TAG_NAME"; then
             echo "⚠️ 重试推送Tag..."
             git push origin "$TAG_NAME" || exit 1
           fi
           echo "✅ Git Tag推送成功：$TAG_NAME"
 
-      - name: 发布APK到GitHub Releases（带图标展示）
+      - name: 发布APK到GitHub Releases
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -738,12 +687,6 @@ EOF
             - 包名：${{ env.APP_PACKAGE }}
             - 支持系统：Android 5.0+
             - 版本：v${{ env.APP_VERSION_NAME }}
-            - 核心功能：网页加载+自定义加载动画+自定义图标
-            
-            ### 📌 本次更新
-            - 支持通过项目根目录`icon`文件夹自定义应用图标
-            - 图标要求：48.png（mdpi）、72.png（hdpi）、96.png（xhdpi）、144.png（xxhdpi）
-            - 缺失图标将自动使用默认蓝色圆形图标
             
             ### 📥 下载
             点击Assets中的APK文件下载安装
