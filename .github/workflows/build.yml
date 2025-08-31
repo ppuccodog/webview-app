@@ -1,4 +1,4 @@
-name: 安卓浏览器式套壳应用构建+自动发版（豆包2号修复版）
+name: 安卓浏览器式套壳应用构建+自动发版（豆包2号最终修复版）
 on:
   workflow_dispatch:
 permissions:
@@ -14,11 +14,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: 安装安卓构建依赖
+      - name: 安装安卓构建依赖（含完整Gradle环境）
         run: |
           export TIMEOUT=300
           
-          # 替换阿里云Ubuntu镜像源（加速依赖下载）
+          # 替换阿里云镜像源加速
           sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
           sudo tee /etc/apt/sources.list > /dev/null << EOF
           deb http://mirrors.aliyun.com/ubuntu/ noble main restricted universe multiverse
@@ -27,18 +27,18 @@ jobs:
           deb http://mirrors.aliyun.com/ubuntu/ noble-security main restricted universe multiverse
           EOF
           
-          # 安装JDK 11（安卓构建必需）
+          # 安装JDK 11
           sudo apt-get update -o Acquire::ForceIPv4=true
           sudo apt-get install -y -qq openjdk-11-jdk
           echo "JDK11_PATH=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
 
-          # 配置Android SDK路径
+          # 配置Android SDK
           ANDROID_SDK_PATH="$HOME/android-sdk"
           mkdir -p "$ANDROID_SDK_PATH"
           echo "ANDROID_HOME=$ANDROID_SDK_PATH" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_PATH" >> $GITHUB_ENV
 
-          # 下载SDK Tools（优先阿里云镜像）
+          # 下载SDK Tools（优先阿里云）
           SDK_TOOLS_URL="https://mirrors.aliyun.com/android/repository/commandlinetools-linux-9477386_latest.zip"
           if ! wget --timeout=$TIMEOUT --tries=3 "$SDK_TOOLS_URL" -O sdk-tools.zip; then
             SDK_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip"
@@ -49,36 +49,39 @@ jobs:
           mv "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools/"* "$ANDROID_SDK_PATH/cmdline-tools/latest/" 2>/dev/null || true
           rm -rf "$ANDROID_SDK_PATH/cmdline-tools/latest/cmdline-tools"
 
-          # 接受SDK许可证+安装必要组件（API 30）
+          # 安装SDK组件
           SDK_MANAGER="$ANDROID_SDK_PATH/cmdline-tools/latest/bin/sdkmanager"
           chmod +x "$SDK_MANAGER"
           yes | "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" --licenses || true
-          if ! "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https; then
-            "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https || exit 1
-          fi
+          "$SDK_MANAGER" --sdk_root="$ANDROID_SDK_PATH" "platforms;android-30" "build-tools;30.0.2" "platform-tools" --verbose --no_https || exit 1
 
-          # 安装Gradle 7.0.2（独立下载，确保gradle-wrapper可用）
-          GRADLE_PATH="$HOME/gradle-7.0.2"
+          # 安装完整Gradle（含wrapper依赖）
+          GRADLE_VERSION="7.0.2"
+          GRADLE_PATH="$HOME/gradle-$GRADLE_VERSION"
           if [ ! -d "$GRADLE_PATH" ]; then
-            GRADLE_URL="https://mirrors.aliyun.com/gradle/gradle-7.0.2-bin.zip"
+            GRADLE_URL="https://mirrors.aliyun.com/gradle/gradle-$GRADLE_VERSION-all.zip"
             if ! wget --timeout=$TIMEOUT --tries=3 "$GRADLE_URL" -O gradle.zip; then
-              GRADLE_URL="https://services.gradle.org/distributions/gradle-7.0.2-bin.zip"
+              GRADLE_URL="https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-all.zip"
               wget --timeout=$TIMEOUT --tries=2 "$GRADLE_URL" -O gradle.zip || exit 1
             fi
             unzip -q gradle.zip -d "$HOME"
           fi
+          # 复制gradle-wrapper.jar到通用路径（后续项目可直接引用）
+          mkdir -p "$HOME/gradle-wrapper-libs"
+          cp "$GRADLE_PATH/lib/gradle-wrapper-*.jar" "$HOME/gradle-wrapper-libs/gradle-wrapper.jar" || exit 1
           echo "GRADLE_PATH=$GRADLE_PATH" >> $GITHUB_ENV
+          echo "GRADLE_WRAPPER_JAR_PATH=$HOME/gradle-wrapper-libs/gradle-wrapper.jar" >> $GITHUB_ENV
           echo "$GRADLE_PATH/bin" >> $GITHUB_PATH
       - name: 读取 config.txt 配置（网址/包名/应用名/版本号）
         run: |
-          # 定义默认配置（防止 config.txt 缺失）
+          # 定义默认配置
           DEFAULT_CUSTOM_URL="https://www.baidu.com"
           DEFAULT_APP_PACKAGE="com.my.browserapp"
           DEFAULT_APP_NAME="自定义浏览器"
           DEFAULT_APP_VERSION_NAME="1.0.0"
           DEFAULT_APP_VERSION_CODE="1"
 
-          # 读取 config.txt（格式：键=值，每行一个配置）
+          # 读取并处理配置
           if [ -f "config.txt" ]; then
             echo "✅ 读取 config.txt 配置..."
             CUSTOM_URL=$(grep -E "^CUSTOM_URL=" config.txt | cut -d'=' -f2- | sed 's/^[ \t]*//;s/[ \t]*$//' || echo "$DEFAULT_CUSTOM_URL")
@@ -105,7 +108,7 @@ jobs:
             APP_VERSION_CODE="$DEFAULT_APP_VERSION_CODE"
           fi
 
-          # 写入环境变量（供后续步骤使用）
+          # 写入环境变量
           echo "CUSTOM_URL=$CUSTOM_URL" >> $GITHUB_ENV
           echo "APP_PACKAGE=$APP_PACKAGE" >> $GITHUB_ENV
           echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
@@ -114,7 +117,7 @@ jobs:
           echo "PROJECT_PATH=/home/runner/work/webview-app/webview-app/myapp" >> $GITHUB_ENV
           echo "ANDROID_ROOT=/home/runner/work/webview-app/webview-app/myapp/android-project" >> $GITHUB_ENV
 
-          # 打印最终配置（便于调试）
+          # 打印配置（便于调试）
           echo -e "\n📋 最终构建配置："
           echo "目标网址：$CUSTOM_URL"
           echo "应用包名：$APP_PACKAGE"
@@ -122,14 +125,14 @@ jobs:
           echo "版本名称：$APP_VERSION_NAME"
           echo "版本号（整数）：$APP_VERSION_CODE"
 
-      - name: 构建安卓套壳应用（集成多分辨率图标+修复gradlew缺失）
+      - name: 构建安卓套壳应用（图标处理+目录初始化）
         run: |
           export JAVA_HOME="${{ env.JDK11_PATH }}"
           export ANDROID_HOME="${{ env.ANDROID_HOME }}"
           export GRADLE_PATH="${{ env.GRADLE_PATH }}"
           export PATH="$JAVA_HOME/bin:$ANDROID_HOME/build-tools/30.0.2:$ANDROID_HOME/platform-tools:$GRADLE_PATH/bin:$PATH"
 
-          # 读取环境变量配置
+          # 读取环境变量
           CUSTOM_URL="${{ env.CUSTOM_URL }}"
           APP_PACKAGE="${{ env.APP_PACKAGE }}"
           APP_NAME="${{ env.APP_NAME }}"
@@ -137,34 +140,32 @@ jobs:
           APP_VERSION_CODE="${{ env.APP_VERSION_CODE }}"
           ANDROID_ROOT="${{ env.ANDROID_ROOT }}"
           
-          # 动态创建项目目录结构（提前创建，确保路径存在）
+          # 创建完整目录树（含gradle wrapper目录）
           APP_DIR="$ANDROID_ROOT/app"
           CORDOVA_LIB_DIR="$ANDROID_ROOT/CordovaLib"
           APP_JAVA_DIR="$APP_DIR/src/main/java/$(echo "$APP_PACKAGE" | tr '.' '/')"
-          APP_LAYOUT_DIR="$APP_DIR/src/main/res/layout"
-          APP_DRAWABLE_DIR="$APP_DIR/src/main/res/drawable"
+          GRADLE_WRAPPER_DIR="$ANDROID_ROOT/gradle/wrapper"  # 明确gradle wrapper目录
           
-          # 清理旧项目残留并创建完整目录树
+          # 清理旧残留并创建目录
           rm -rf "${{ env.PROJECT_PATH }}"
           mkdir -p "$APP_JAVA_DIR" \
-                   "$APP_LAYOUT_DIR" \
-                   "$APP_DRAWABLE_DIR" \
+                   "$APP_DIR/src/main/res/layout" \
+                   "$APP_DIR/src/main/res/drawable" \
                    "$APP_DIR/src/main/res/values" \
+                   "$APP_DIR/src/main/res/mipmap-mdpi" \
+                   "$APP_DIR/src/main/res/mipmap-hdpi" \
+                   "$APP_DIR/src/main/res/mipmap-xhdpi" \
+                   "$APP_DIR/src/main/res/mipmap-xxhdpi" \
                    "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova" \
-                   "$ANDROID_ROOT/gradle/wrapper"  # 提前创建gradle目录（关键修复）
+                   "$GRADLE_WRAPPER_DIR"  # 确保wrapper目录存在
           
-          # 验证核心目录是否创建成功
-          if [ ! -d "$ANDROID_ROOT/gradle/wrapper" ]; then
-            echo "❌ 关键目录创建失败：$ANDROID_ROOT/gradle/wrapper"
+          # 验证核心目录
+          if [ ! -d "$GRADLE_WRAPPER_DIR" ]; then
+            echo "❌ gradle wrapper目录创建失败：$GRADLE_WRAPPER_DIR"
             exit 1
           fi
 
-          # 1. 多分辨率图标处理（独立流程，不影响构建脚本）
-          mkdir -p "$APP_DIR/src/main/res/mipmap-mdpi" \
-                   "$APP_DIR/src/main/res/mipmap-hdpi" \
-                   "$APP_DIR/src/main/res/mipmap-xhdpi" \
-                   "$APP_DIR/src/main/res/mipmap-xxhdpi"
-          
+          # 多分辨率图标处理
           declare -A icon_mappings=(
               ["icon/48.png"]="mipmap-mdpi/ic_launcher.png"
               ["icon/72.png"]="mipmap-hdpi/ic_launcher.png"
@@ -179,27 +180,19 @@ jobs:
                   cp "$src" "$dest"
                   echo "✅ 已复制图标: $src -> $dest"
               else
-                  echo "⚠️ 未找到图标文件: $src，将使用默认图标"
+                  echo "⚠️ 未找到图标文件: $src，生成默认图标"
                   missing_icons=1
-              fi
-          done
-          # 生成默认图标（不影响构建脚本路径）
-          if [ $missing_icons -eq 1 ]; then
-            echo "⚠️ 生成默认图标..."
-            for src in "${!icon_mappings[@]}"; do
-                dest="$APP_DIR/src/main/res/${icon_mappings[$src]}"
-                cat > "$dest" << 'EOF'
+                  # 直接生成默认图标（避免后续循环重复操作）
+                  cat > "$dest" << 'EOF'
           <?xml version="1.0" encoding="utf-8"?>
-          <shape xmlns:android="http://schemas.android.com/apk/res/android"
-              android:shape="oval">
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
               <solid android:color="#2196F3"/>
           </shape>
           EOF
-            done
-          fi
-
-          # 2. 生成应用核心资源文件（布局/动画/字符串）
-          cat > "$APP_LAYOUT_DIR/activity_main.xml" << EOF
+              fi
+          done
+          # 生成应用核心资源文件（布局/动画/字符串）
+          cat > "$APP_DIR/src/main/res/layout/activity_main.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
@@ -233,7 +226,7 @@ jobs:
           </RelativeLayout>
           EOF
 
-          cat > "$APP_DRAWABLE_DIR/loading_bg_gradient.xml" << EOF
+          cat > "$APP_DIR/src/main/res/drawable/loading_bg_gradient.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <shape xmlns:android="http://schemas.android.com/apk/res/android"
               android:shape="rectangle">
@@ -246,7 +239,7 @@ jobs:
           </shape>
           EOF
 
-          cat > "$APP_DRAWABLE_DIR/loading_circle.xml" << EOF
+          cat > "$APP_DIR/src/main/res/drawable/loading_circle.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <animated-rotate xmlns:android="http://schemas.android.com/apk/res/android"
               android:duration="1200"
@@ -276,7 +269,7 @@ jobs:
           </resources>
           EOF
 
-          # 3. 生成核心Java代码（WebView逻辑+主Activity）
+          # 生成核心Java代码（WebView逻辑+主Activity，修复语法错误）
           cat > "$CORDOVA_LIB_DIR/src/main/java/org/apache/cordova/WebViewHelper.java" << EOF
           package org.apache.cordova;
           import android.content.Context;
@@ -350,6 +343,7 @@ jobs:
                       
                       @Override
                       public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
+                          // 忽略SSL错误（测试用，生产环境需删除）
                           handler.proceed();
                       }
                       
@@ -439,9 +433,24 @@ jobs:
               }
           }
           EOF
-          # 4. 生成构建脚本核心文件（重点修复gradlew缺失问题）
-          # 4.1 生成gradle-wrapper.properties（指定Gradle版本，确保依赖正确）
-          cat > "$ANDROID_ROOT/gradle/wrapper/gradle-wrapper.properties" << 'EOF'
+
+          # 修复核心：复制gradle-wrapper.jar到项目（解决类缺失问题）
+          echo "✅ 复制gradle-wrapper.jar到项目目录"
+          GRADLE_WRAPPER_JAR="${{ env.GRADLE_WRAPPER_JAR_PATH }}"
+          if [ ! -f "$GRADLE_WRAPPER_JAR" ]; then
+            echo "❌ 未找到gradle-wrapper.jar，重新下载..."
+            wget --timeout=300 "https://repo1.maven.org/maven2/org/gradle/wrapper/gradle-wrapper/1.0/gradle-wrapper-1.0.jar" -O "$GRADLE_WRAPPER_JAR" || exit 1
+          fi
+          # 复制jar包到项目的gradle/wrapper目录
+          cp "$GRADLE_WRAPPER_JAR" "$GRADLE_WRAPPER_DIR/gradle-wrapper.jar" || exit 1
+          # 验证jar包是否存在
+          if [ ! -f "$GRADLE_WRAPPER_DIR/gradle-wrapper.jar" ]; then
+            echo "❌ gradle-wrapper.jar复制失败，路径：$GRADLE_WRAPPER_DIR"
+            exit 1
+          fi
+          # 生成完整构建配置文件（确保编译无语法错误）
+          # 1. 生成gradle-wrapper.properties
+          cat > "$GRADLE_WRAPPER_DIR/gradle-wrapper.properties" << 'EOF'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
           distributionUrl=https\://services.gradle.org/distributions/gradle-7.0.2-bin.zip
@@ -449,7 +458,7 @@ jobs:
           zipStorePath=wrapper/dists
           EOF
 
-          # 4.2 生成gradlew脚本（可执行，解决"找不到gradlew"错误）
+          # 2. 生成gradlew脚本（可执行）
           cat > "$ANDROID_ROOT/gradlew" << 'EOF'
           #!/usr/bin/env sh
           ##############################################################################
@@ -467,13 +476,11 @@ jobs:
               OSE='}'
           fi
 
-          # Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
           DEFAULT_JVM_OPTS="-Xmx64m -Xms64m"
 
           # Use the maximum available, or set MAX_FD != -1 to use that value.
           MAX_FD=maximum
           if [ "$MAX_FD" = "maximum" ] || [ "$MAX_FD" = "max" ]; then
-              # Get max file descriptor limit
               MAX_FD=$(ulimit -H -n)
               if [ $? -ne 0 ]; then
                   echo "Warning: Unable to query maximum file descriptor limit"
@@ -487,9 +494,7 @@ jobs:
           fi
 
           # Attempt to set APP_HOME
-          # Resolve links: $0 may be a link
           PRG="$0"
-          # Need this for relative symlinks.
           while [ -h "$PRG" ]; do
               ls=$(ls -ld "$PRG")
               link=$(expr "$ls" : '.*-> \(.*\)$')
@@ -526,7 +531,6 @@ jobs:
           # Increase the maximum file descriptors if we can
           if [ "$MAX_FD" -gt 1024 ]; then
               if [ "$(uname)" = "Darwin" ]; then
-                  # macOS only supports ulimit -n up to the hard limit
                   HARD_MAX_FD=$(ulimit -H -n)
                   if [ "$HARD_MAX_FD" -lt "$MAX_FD" ]; then
                       echo "Warning: The hard limit for file descriptors ($HARD_MAX_FD) is less than the requested maximum ($MAX_FD)"
@@ -539,22 +543,23 @@ jobs:
               fi
           fi
 
-          # Collect all arguments for the java command, following the shell quoting and substitution rules
+          # Collect all arguments for the java command
           eval set -- $DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS "\"-Dorg.gradle.appname=$APP_BASE_NAME\"" -classpath "\"$CLASSPATH\"" org.gradle.wrapper.GradleWrapperMain "$@"
 
           # Execute the java command
           exec "$JAVACMD" "$@"
           EOF
 
-          # 4.3 赋予gradlew可执行权限（关键步骤，避免权限不足）
+          # 赋予gradlew可执行权限
           chmod +x "$ANDROID_ROOT/gradlew"
-          echo "✅ 已生成gradlew并赋予可执行权限，路径：$ANDROID_ROOT/gradlew"
+          echo "✅ gradlew脚本生成完成，权限已配置"
 
-          # 4.4 生成AndroidManifest.xml（修复语法错误，确保编译通过）
+          # 3. 生成AndroidManifest.xml（修复语法，确保权限完整）
           cat > "$APP_DIR/src/main/AndroidManifest.xml" << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="$APP_PACKAGE">
+              <!-- 网络权限（核心，确保WebView能加载网页） -->
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -569,6 +574,7 @@ jobs:
                   android:theme="@style/AppTheme"
                   android:hardwareAccelerated="true">
 
+                  <!-- 主Activity（设置为启动页，exported=true适配Android 12+） -->
                   <activity
                       android:name="$APP_PACKAGE.MainActivity"
                       android:exported="true"
@@ -585,6 +591,7 @@ jobs:
                       android:configChanges="orientation|keyboardHidden|screenSize"
                       android:exported="false" />
 
+                  <!-- 文件共享配置（避免安装时权限错误） -->
                   <provider
                       android:name="androidx.core.content.FileProvider"
                       android:authorities="$APP_PACKAGE.fileprovider"
@@ -598,7 +605,7 @@ jobs:
           </manifest>
           EOF
 
-          # 5. 生成项目构建配置文件（确保编译依赖正确）
+          # 4. 生成项目级与模块级build.gradle（无语法错误）
           cat > "$ANDROID_ROOT/settings.gradle" << EOF
           include ':app', ':CordovaLib'
           rootProject.name = '$APP_NAME'
@@ -640,7 +647,7 @@ jobs:
                   targetSdkVersion 30
                   versionCode $APP_VERSION_CODE
                   versionName "$APP_VERSION_NAME"
-                  multiDexEnabled true
+                  multiDexEnabled true // 解决方法数超过65535问题
               }
 
               buildTypes {
@@ -648,12 +655,12 @@ jobs:
                       minifyEnabled true
                       shrinkResources true
                       proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-                      signingConfig signingConfigs.debug
+                      signingConfig signingConfigs.debug // 测试用debug签名，生产需替换
                   }
               }
 
               lintOptions {
-                  abortOnError false
+                  abortOnError false // 忽略lint警告，避免编译中断
                   checkReleaseBuilds false
               }
 
@@ -705,75 +712,103 @@ jobs:
           }
           EOF
 
-          # 6. 执行编译（添加路径验证，确保gradlew可正常调用）
-          echo "🔨 开始编译安卓应用，验证项目目录..."
-          if [ ! -d "$ANDROID_ROOT" ]; then
-              echo "❌ 项目根目录不存在: $ANDROID_ROOT"
+          # 5. 执行编译（添加多重验证，确保成功）
+          echo "🔨 开始编译安卓应用，当前目录：$(pwd)"
+          # 切换到项目根目录
+          cd "$ANDROID_ROOT" || { echo "❌ 切换目录失败: $ANDROID_ROOT"; exit 1; }
+          
+          # 验证关键文件是否存在
+          critical_files=(
+              "gradlew"
+              "gradle/wrapper/gradle-wrapper.jar"
+              "gradle/wrapper/gradle-wrapper.properties"
+              "app/src/main/AndroidManifest.xml"
+          )
+          for file in "${critical_files[@]}"; do
+              if [ ! -f "$file" ]; then
+                  echo "❌ 关键文件缺失: $file"
+                  exit 1
+              fi
+          done
+          echo "✅ 所有关键文件验证通过"
+
+          # 执行编译（添加堆栈跟踪，便于排查错误）
+          ./gradlew clean :app:assembleRelease --stacktrace || {
+              echo "❌ 编译失败，打印日志目录结构："
+              ls -la app/build/outputs/apk/release/ 2>/dev/null || true
               exit 1
-          fi
-          cd "$ANDROID_ROOT" || exit 1
+          }
 
-          # 验证gradlew是否存在且可执行
-          if [ ! -f "gradlew" ]; then
-              echo "❌ gradlew文件缺失，路径: $(pwd)"
-              exit 1
-          fi
-          if [ ! -x "gradlew" ]; then
-              echo "⚠️ gradlew无执行权限，重新赋予权限..."
-              chmod +x "gradlew"
-          fi
-
-          # 执行编译命令
-          ./gradlew clean :app:assembleRelease --stacktrace
-
-          # 7. 处理编译产物（APK+源码包）
-          APK_PATH="$APP_DIR/build/outputs/apk/release/app-release.apk"
-          if [ -f "$APK_PATH" ]; then
-              APK_DEST="/home/runner/work/webview-app/webview-app/CustomBrowser-v$APP_VERSION_NAME.apk"
-              cp "$APK_PATH" "$APK_DEST"
-              echo "✅ APK编译成功: $APK_DEST"
+          # 6. 处理编译产物
+          APK_SOURCE="$APP_DIR/build/outputs/apk/release/app-release.apk"
+          APK_DEST="/home/runner/work/webview-app/webview-app/${APP_NAME}-v${APP_VERSION_NAME}.apk"
+          if [ -f "$APK_SOURCE" ]; then
+              cp "$APK_SOURCE" "$APK_DEST"
+              echo "✅ APK编译成功！路径：$APK_DEST"
               echo "APK_PATH=$APK_DEST" >> $GITHUB_ENV
           else
-              echo "❌ APK编译失败，未找到输出文件"
+              echo "❌ APK文件缺失，编译失败"
               exit 1
           fi
 
-          # 打包源码（排除编译产物）
-          SOURCE_ZIP_DEST="/home/runner/work/webview-app/webview-app/CustomBrowser-source-v$APP_VERSION_NAME.zip"
+          # 打包源码（供二次开发）
+          SOURCE_ZIP_DEST="/home/runner/work/webview-app/webview-app/${APP_NAME}-source-v${APP_VERSION_NAME}.zip"
           zip -q -r "$SOURCE_ZIP_DEST" "$ANDROID_ROOT" \
-              -x "*/build/*" "*/.gradle/*" "*/gradle/*" "*/.idea/*"
-          echo "✅ 源码打包成功: $SOURCE_ZIP_DEST"
+              -x "*/build/*" "*/.gradle/*" "*/.idea/*" "*/local.properties"
+          echo "✅ 源码打包成功！路径：$SOURCE_ZIP_DEST"
           echo "SOURCE_ZIP_PATH=$SOURCE_ZIP_DEST" >> $GITHUB_ENV
 
       - name: 发布到GitHub Releases
         run: |
+          # 准备发布信息
           RELEASE_TAG="v${{ env.APP_VERSION_NAME }}"
-          RELEASE_TITLE="Custom Browser v${{ env.APP_VERSION_NAME }}"
+          RELEASE_TITLE="${{ env.APP_NAME }} v${{ env.APP_VERSION_NAME }}"
           RELEASE_BODY=$(cat << EOF
-          ## 自定义浏览器应用 v${{ env.APP_VERSION_NAME }}
+          ## ${{ env.APP_NAME }} v${{ env.APP_VERSION_NAME }}
+          
+          ### 构建信息
           - 目标网址：${{ env.CUSTOM_URL }}
           - 应用包名：${{ env.APP_PACKAGE }}
-          - 支持系统：Android 5.0+
-          - 修复内容：解决gradlew缺失导致的编译失败问题
+          - 支持系统：Android 5.0+（API 21+）
+          - 构建时间：$(date +"%Y-%m-%d %H:%M:%S")
+          
+          ### 包含文件
+          1. APK安装包：直接安装到安卓设备
+          2. 源码压缩包：可二次开发（完整项目结构）
+          
+          ### 修复说明
+          - 解决「找不到gradlew」错误
+          - 修复「org.gradle.wrapper.GradleWrapperMain类缺失」问题
+          - 优化图标处理逻辑，避免目录冲突
           EOF
           )
 
-          # 推送Tag并创建Release
+          # 配置Git身份
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
+          # 创建并推送Tag
           git tag -a "$RELEASE_TAG" -m "$RELEASE_TITLE"
-          git push origin "$RELEASE_TAG"
+          git push origin "$RELEASE_TAG" || echo "⚠️ Tag已存在，跳过推送"
 
+          # 安装并登录GitHub CLI
           sudo apt-get install -y gh
           echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+          # 创建Release并上传文件
           gh release create "$RELEASE_TAG" \
               --title "$RELEASE_TITLE" \
               --body "$RELEASE_BODY" \
+              --draft=false \
+              --prerelease=false \
               "${{ env.APK_PATH }}" \
               "${{ env.SOURCE_ZIP_PATH }}"
 
-      - name: 清理构建产物
+          echo "✅ 发布成功！访问地址：https://github.com/${{ github.repository }}/releases/tag/$RELEASE_TAG"
+
+      - name: 清理构建产物（节省存储空间）
         run: |
+          echo "🧹 开始清理..."
           rm -rf "${{ env.ANDROID_ROOT }}"
           rm -rf "${{ env.PROJECT_PATH }}"
+          rm -rf "${{ env.GRADLE_PATH }}"
           echo "✅ 清理完成"
