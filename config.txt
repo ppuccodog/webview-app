@@ -1,5 +1,5 @@
-CUSTOM_URL=http://www.csdhcalculator.cn/bCSDH/index.html
-APP_PACKAGE=com.ysjyy.bcsdh
-APP_NAME=bCSDH计算器
+CUSTOM_URL=http://www.csdhcalculator.cn/eCSDH/index.html
+APP_PACKAGE=com.ysjyy.ecsdh
+APP_NAME=eCSDH计算器
 APP_VERSION_NAME=1.0.0
 APP_VERSION_CODE=1
