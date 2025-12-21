@@ -1,5 +1,5 @@
-CUSTOM_URL=http://www.csdhcalculator.cn/NeuroPredict/index.html
-APP_PACKAGE=com.ysjyy.neuro.predict
-APP_NAME=慢硬下血肿钻孔术后预后计算器
+CUSTOM_URL=http://www.predrctgh.cn/index2.html
+APP_PACKAGE=com.ysjyy.zsl.predict
+APP_NAME=GH腺瘤生化缓解预测(低Knosp分级)
 APP_VERSION_NAME=1.0.0
 APP_VERSION_CODE=1
