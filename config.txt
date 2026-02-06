@@ -1,5 +1,5 @@
-CUSTOM_URL=http://csdhcalculator.cn/zhang/index.html
-APP_PACKAGE=com.ysjyy.zsl.predict2
-APP_NAME=GH瘤延迟缓解预测
+CUSTOM_URL=http://csdhcalculator.cn/zhang/index2.html
+APP_PACKAGE=com.ysjyy.zsl.app
+APP_NAME=GH腺瘤生化缓解预测(低Knosp分级)
 APP_VERSION_NAME=1.0.0
 APP_VERSION_CODE=1
