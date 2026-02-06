@@ -1,4 +1,4 @@
-CUSTOM_URL=http://www.predrctgh.cn/
+CUSTOM_URL=http://csdhcalculator.cn/zhang/index.html
 APP_PACKAGE=com.ysjyy.zsl.predict2
 APP_NAME=GH瘤延迟缓解预测
 APP_VERSION_NAME=1.0.0
